@@ -12,6 +12,7 @@ class Priority(IntEnum):
     LOW = 1
     MEDIUM = 2
     HIGH = 3
+    URGENT = 4
 
     @property
     def label(self) -> str:

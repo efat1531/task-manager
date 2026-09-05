@@ -37,7 +37,7 @@ class TaskDialog(QDialog):
         self._description.setFixedHeight(80)
 
         self._priority = QComboBox()
-        for p in (Priority.HIGH, Priority.MEDIUM, Priority.LOW):
+        for p in (Priority.URGENT, Priority.HIGH, Priority.MEDIUM, Priority.LOW):
             self._priority.addItem(p.label, p)
 
         self._category = QLineEdit()
@@ -72,6 +72,9 @@ class TaskDialog(QDialog):
 
         if task is not None:
             self._load(task)
+        else:
+            # New tasks default to Medium; Urgent should be a deliberate choice.
+            self._priority.setCurrentIndex(self._priority.findData(Priority.MEDIUM))
 
     # ---- populate when editing ------------------------------------------
     def _load(self, task: Task) -> None:
