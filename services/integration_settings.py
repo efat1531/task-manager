@@ -35,3 +35,10 @@ def save_config(config: AzureConfig) -> None:
     s.setValue("azure/project", config.project)
     s.setValue("azure/reviewer_id", config.reviewer_id)
     s.setValue("azure/poll_minutes", config.poll_minutes)
+
+
+def clear_config() -> None:
+    """Remove every stored Azure setting (the PAT is cleared separately)."""
+    s = _settings()
+    for key in ("enabled", "org", "project", "reviewer_id", "poll_minutes"):
+        s.remove(f"azure/{key}")

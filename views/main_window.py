@@ -58,6 +58,7 @@ class MainWindow(QMainWindow):
 
         self._integration_tab = IntegrationTab()
         self._integration_tab.prs_fetched.connect(self._on_prs_fetched)
+        self._integration_tab.cleared.connect(self._on_integration_cleared)
         self._tabs.addTab(self._integration_tab, "Integrations")
 
         self.setCentralWidget(self._tabs)
@@ -445,6 +446,12 @@ class MainWindow(QMainWindow):
 
     def _auto_sync(self) -> None:
         self._integration_tab.trigger_sync(auto=True)
+
+    def _on_integration_cleared(self) -> None:
+        """The integration was removed: forget PR links and stop auto-polling."""
+        self._controller.clear_pr_links()
+        self._poll_timer.stop()
+        self.refresh()
 
     def _start_poll_timer(self) -> None:
         """(Re)start the auto-poll timer from the saved config, or stop it."""

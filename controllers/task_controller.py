@@ -227,6 +227,11 @@ class TaskController:
 
         return {"created": created, "skipped": skipped, "completed": completed}
 
+    def clear_pr_links(self) -> None:
+        """Forget which PRs have been synced. Tasks already created are kept, but
+        an open PR may produce a fresh task on a future sync."""
+        self._repo.clear_pr_links()
+
     # ---- undo ------------------------------------------------------------
     def can_undo(self) -> bool:
         return bool(self._undo_stack)

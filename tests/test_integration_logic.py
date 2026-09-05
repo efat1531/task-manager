@@ -72,6 +72,15 @@ def test_autocomplete_is_idempotent(controller):
     assert summary["completed"] == 0
 
 
+def test_clear_pr_links_forgets_synced_prs(controller):
+    controller.sync_pull_requests([_pr(1)], ORG)
+    controller.clear_pr_links()
+    # The link is gone, so the same PR is created fresh on the next sync.
+    summary = controller.sync_pull_requests([_pr(1)], ORG)
+    assert summary["created"] == 1
+    assert summary["skipped"] == 0
+
+
 # ---- link persistence + mapping -----------------------------------------
 def test_pr_link_round_trip():
     repo = TaskRepository(":memory:")

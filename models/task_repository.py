@@ -317,5 +317,10 @@ class TaskRepository:
         self._conn.execute("DELETE FROM pr_links WHERE pr_key = ?", (pr_key,))
         self._conn.commit()
 
+    def clear_pr_links(self) -> None:
+        """Forget every PR->task link (used when removing the integration)."""
+        self._conn.execute("DELETE FROM pr_links")
+        self._conn.commit()
+
     def close(self) -> None:
         self._conn.close()

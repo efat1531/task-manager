@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -70,6 +71,8 @@ class IntegrationTab(QWidget):
     sync_completed = Signal(dict)
     #: Emitted (list[PullRequest], org) so the window can run the controller sync.
     prs_fetched = Signal(list, str)
+    #: Emitted after the integration is removed, so the window can forget PR links.
+    cleared = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -115,10 +118,13 @@ class IntegrationTab(QWidget):
         self._save_btn.clicked.connect(self._on_save)
         self._test_btn.clicked.connect(self._on_test)
         self._sync_btn.clicked.connect(self.trigger_sync)
+        self._remove_btn = QPushButton("Remove integration")
+        self._remove_btn.clicked.connect(self._on_remove)
         buttons.addWidget(self._save_btn)
         buttons.addWidget(self._test_btn)
         buttons.addWidget(self._sync_btn)
         buttons.addStretch(1)
+        buttons.addWidget(self._remove_btn)
         root.addLayout(buttons)
 
         self._status = QLabel("Not configured.")
@@ -189,6 +195,33 @@ class IntegrationTab(QWidget):
     def _on_test(self) -> None:
         self._start_worker("test")
 
+    def _on_remove(self) -> None:
+        confirm = QMessageBox.question(
+            self,
+            "Remove integration",
+            "Delete the saved Azure connection?\n\n"
+            "This removes the access token and all integration settings, and forgets "
+            "which pull requests were already synced. Tasks that were already created "
+            "are kept.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        credentials.delete_pat()
+        integration_settings.clear_config()
+        self.cleared.emit()          # window forgets PR links + stops polling
+        self._reset_form()
+
+    def _reset_form(self) -> None:
+        defaults = AzureConfig()
+        self._enabled.setChecked(defaults.enabled)
+        self._org.clear()
+        self._project.clear()
+        self._poll.setValue(defaults.poll_minutes)
+        self._pat.clear()
+        self._pat.setPlaceholderText("Personal Access Token (Code → Read)")
+        self._status.setText("Integration removed.")
+
     def trigger_sync(self, *, auto: bool = False) -> None:
         """Kick off a background sync. ``auto`` marks poll-driven runs (quieter)."""
         cfg = self.current_config()
@@ -257,5 +290,5 @@ class IntegrationTab(QWidget):
         self._worker = None
 
     def _set_busy(self, busy: bool) -> None:
-        for btn in (self._test_btn, self._sync_btn, self._save_btn):
+        for btn in (self._test_btn, self._sync_btn, self._save_btn, self._remove_btn):
             btn.setEnabled(not busy)
