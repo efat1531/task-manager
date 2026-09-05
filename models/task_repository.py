@@ -124,6 +124,19 @@ class TaskRepository:
         )
         self._conn.commit()
 
+    def restore(self, task: Task) -> None:
+        """Re-insert a previously deleted task, preserving its original id."""
+        if task.id is None:
+            raise ValueError("Cannot restore a task without an id.")
+        self._conn.execute(
+            f"""INSERT INTO tasks ({_COLUMNS})
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (task.id, task.title, task.description, int(task.priority),
+             task.sort_order, task.deadline, int(task.completed),
+             task.category, task.created_at),
+        )
+        self._conn.commit()
+
     # ---- delete ----------------------------------------------------------
     def delete(self, task_id: int) -> None:
         self._conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))

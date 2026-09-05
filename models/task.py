@@ -39,13 +39,27 @@ class Task:
     id: Optional[int] = None
     created_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
 
+    def _due_date(self):
+        """Parsed deadline date, or None if unset/uncompletable/malformed."""
+        if not self.deadline:
+            return None
+        try:
+            return datetime.fromisoformat(self.deadline).date()
+        except ValueError:
+            return None
+
     @property
     def is_overdue(self) -> bool:
         """True if the task has a past deadline and is not yet complete."""
-        if self.completed or not self.deadline:
+        if self.completed:
             return False
-        try:
-            due = datetime.fromisoformat(self.deadline).date()
-        except ValueError:
+        due = self._due_date()
+        return due is not None and due < datetime.now().date()
+
+    @property
+    def is_due_today(self) -> bool:
+        """True if an incomplete task's deadline is today."""
+        if self.completed:
             return False
-        return due < datetime.now().date()
+        due = self._due_date()
+        return due is not None and due == datetime.now().date()

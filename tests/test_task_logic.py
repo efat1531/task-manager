@@ -91,6 +91,48 @@ def test_sort_by_deadline_nulls_last(controller):
     assert titles == ["soon", "later", "no-date"]
 
 
+def test_search_matches_title_and_description(controller):
+    controller.create_task("Buy groceries", description="milk and eggs")
+    controller.create_task("Call plumber", description="fix the sink")
+    controller.create_task("Email boss")
+    assert [t.title for t in controller.search_tasks("milk")] == ["Buy groceries"]
+    assert [t.title for t in controller.search_tasks("SINK")] == ["Call plumber"]
+    assert len(controller.search_tasks("")) == 3
+    assert controller.search_tasks("nonexistent") == []
+
+
+def test_undo_delete_restores_task_with_id(controller):
+    task = controller.create_task("Important", description="keep me")
+    assert controller.can_undo() is False
+    controller.delete_task(task.id)
+    assert controller.list_tasks() == []
+    assert controller.can_undo() is True
+    assert task.title in controller.undo_label()
+    assert controller.undo() is True
+    restored = controller.list_tasks()
+    assert len(restored) == 1
+    assert restored[0].id == task.id
+    assert restored[0].title == "Important"
+    assert restored[0].description == "keep me"
+    assert controller.can_undo() is False
+
+
+def test_reminders_split_overdue_and_due_today(controller):
+    from datetime import date
+    today = date.today().isoformat()
+    yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
+    tomorrow = (datetime.now() + timedelta(days=1)).date().isoformat()
+    controller.create_task("past", deadline=yesterday)
+    controller.create_task("today", deadline=today)
+    controller.create_task("future", deadline=tomorrow)
+    controller.create_task("no-date")
+    done = controller.create_task("done-today", deadline=today)
+    controller.toggle_completed(done)  # completed tasks never remind
+    overdue, due_today = controller.reminders()
+    assert [t.title for t in overdue] == ["past"]
+    assert [t.title for t in due_today] == ["today"]
+
+
 def test_is_overdue():
     yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
     tomorrow = (datetime.now() + timedelta(days=1)).date().isoformat()

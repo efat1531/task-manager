@@ -14,8 +14,13 @@ completed tasks show struck through.
 `sort_order` (enabled only under "Manual order" sort), plus filtering by
 status (all / open / completed) and by category.
 
+**Phase 3 — complete:** live search over title/description, startup
+reminders for overdue / due-today tasks (desktop notification via plyer),
+undo for deletes (button + `Ctrl+Z`), and a dark-mode toggle whose choice is
+remembered across launches (`QSettings`). Categories/tags are handled by the
+existing category field and its filter.
+
 Planned next:
-- **Phase 3:** notifications/reminders, categories/tags, search, dark mode, undo.
 - **Phase 4:** package per-OS with PyInstaller; CI tests.
 
 ## Project layout
@@ -28,11 +33,12 @@ models/
 controllers/
   task_controller.py         # mediates view <-> repository (no Qt imports)
 views/
-  main_window.py             # task table + toolbar + sorting + filters
+  main_window.py             # task table + toolbar + sorting + filters + search
   task_dialog.py             # add/edit dialog with QDateEdit calendar
   task_list.py               # drag-to-reorder QTableWidget subclass
+  theme.py                   # light/dark palettes + QSettings persistence
 services/
-  notifier.py                # (Phase 3) plyer notification wrapper
+  notifier.py                # plyer desktop-notification wrapper
 data/tasks.db                # SQLite database (gitignored)
 tests/test_task_logic.py     # pytest logic-layer tests (in-memory DB)
 ```
