@@ -4,8 +4,10 @@ Holds no Qt imports so its logic stays unit-testable without a display.
 """
 from __future__ import annotations
 
-from typing import Callable, List, Optional, Tuple
+from datetime import datetime
+from typing import Callable, List, Optional, Set, Tuple
 
+from models.schedule import Frequency, Occurrence, Schedule, occurs_on
 from models.task import Priority, Task
 from models.task_repository import TaskRepository
 
@@ -83,6 +85,105 @@ class TaskController:
     def reorder_tasks(self, ordered_ids: List[int]) -> None:
         """Persist a new manual ordering given task ids in the desired order."""
         self._repo.reorder(ordered_ids)
+
+    # ---- schedules -------------------------------------------------------
+    def create_schedule(
+        self,
+        title: str,
+        start_date: str,
+        end_date: str,
+        freq: Frequency = Frequency.DAILY,
+        weekdays: Optional[Set[int]] = None,
+        description: str = "",
+        priority: Priority = Priority.MEDIUM,
+        category: str = "",
+    ) -> Schedule:
+        title = title.strip()
+        if not title:
+            raise ValueError("Schedule title cannot be empty.")
+        if end_date < start_date:
+            raise ValueError("End date cannot be before start date.")
+        schedule = Schedule(
+            title=title,
+            start_date=start_date,
+            end_date=end_date,
+            freq=freq,
+            weekdays=set(weekdays or set()),
+            description=description.strip(),
+            priority=priority,
+            category=category.strip(),
+            sort_order=len(self._repo.list_schedules()),
+        )
+        return self._repo.add_schedule(schedule)
+
+    def update_schedule(self, schedule: Schedule) -> Schedule:
+        if not schedule.title.strip():
+            raise ValueError("Schedule title cannot be empty.")
+        if schedule.end_date < schedule.start_date:
+            raise ValueError("End date cannot be before start date.")
+        schedule.title = schedule.title.strip()
+        self._repo.update_schedule(schedule)
+        return schedule
+
+    def delete_schedule(self, schedule_id: int) -> None:
+        self._repo.delete_schedule(schedule_id)
+
+    def get_schedule(self, schedule_id: int) -> Optional[Schedule]:
+        return self._repo.get_schedule(schedule_id)
+
+    def list_schedules(self) -> List[Schedule]:
+        return self._repo.list_schedules()
+
+    def occurrences_on(self, iso_date: str) -> List[Occurrence]:
+        """Every non-cancelled occurrence that falls on the given date."""
+        day = datetime.fromisoformat(iso_date).date()
+        result: List[Occurrence] = []
+        for schedule in self._repo.list_schedules():
+            if not occurs_on(schedule, day):
+                continue
+            status = self._repo.get_override(schedule.id, iso_date)
+            if status == "cancelled":
+                continue
+            result.append(
+                Occurrence(
+                    schedule_id=schedule.id,
+                    date=iso_date,
+                    title=schedule.title,
+                    description=schedule.description,
+                    priority=schedule.priority,
+                    category=schedule.category,
+                    completed=(status == "completed"),
+                )
+            )
+        return result
+
+    def toggle_occurrence(self, schedule_id: int, iso_date: str) -> None:
+        """Complete/uncomplete a single day only; other days are untouched."""
+        if self._repo.get_override(schedule_id, iso_date) == "completed":
+            self._repo.clear_override(schedule_id, iso_date)
+        else:
+            self._repo.set_override(schedule_id, iso_date, "completed")
+
+    def cancel_occurrence_day(self, schedule_id: int, iso_date: str) -> None:
+        self._repo.set_override(schedule_id, iso_date, "cancelled")
+        self._undo_stack.append(
+            (
+                "cancel this day",
+                lambda sid=schedule_id, d=iso_date: self._repo.clear_override(sid, d),
+            )
+        )
+
+    def cancel_schedule_from(self, schedule_id: int, iso_date: str) -> None:
+        """Hide occurrences on/after ``iso_date``; past days and completions stay."""
+        schedule = self._repo.get_schedule(schedule_id)
+        previous = schedule.cancelled_from if schedule else None
+        self._repo.set_cancelled_from(schedule_id, iso_date)
+        self._undo_stack.append(
+            (
+                "cancel schedule",
+                lambda sid=schedule_id, p=previous: self._repo.set_cancelled_from(sid, p),
+            )
+        )
 
     # ---- undo ------------------------------------------------------------
     def can_undo(self) -> bool:

@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
+from models.schedule import Frequency, Schedule
 from models.task import Priority, Task
 
 _SCHEMA = """
@@ -23,10 +24,39 @@ CREATE TABLE IF NOT EXISTS tasks (
     category    TEXT    NOT NULL DEFAULT '',
     created_at  TEXT    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS schedules (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    title          TEXT    NOT NULL,
+    description    TEXT    NOT NULL DEFAULT '',
+    priority       INTEGER NOT NULL DEFAULT 2,
+    category       TEXT    NOT NULL DEFAULT '',
+    start_date     TEXT    NOT NULL,
+    end_date       TEXT    NOT NULL,
+    freq           TEXT    NOT NULL DEFAULT 'daily',
+    weekdays       TEXT    NOT NULL DEFAULT '',
+    cancelled_from TEXT,
+    sort_order     INTEGER NOT NULL DEFAULT 0,
+    created_at     TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS schedule_overrides (
+    schedule_id INTEGER NOT NULL,
+    date        TEXT    NOT NULL,
+    status      TEXT    NOT NULL,          -- 'completed' | 'cancelled'
+    PRIMARY KEY (schedule_id, date),
+    FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE
+);
 """
 
 # Column order used by _row_to_task / SELECT statements.
 _COLUMNS = "id, title, description, priority, sort_order, deadline, completed, category, created_at"
+
+# Column order for schedule SELECTs / _row_to_schedule.
+_SCHED_COLUMNS = (
+    "id, title, description, priority, category, start_date, end_date, "
+    "freq, weekdays, cancelled_from, sort_order, created_at"
+)
 
 
 class TaskRepository:
@@ -141,6 +171,117 @@ class TaskRepository:
     def delete(self, task_id: int) -> None:
         self._conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
         self._conn.commit()
+
+    # ---- schedules -------------------------------------------------------
+    @staticmethod
+    def _weekdays_to_csv(weekdays) -> str:
+        return ",".join(str(d) for d in sorted(weekdays))
+
+    @staticmethod
+    def _csv_to_weekdays(csv: str) -> set:
+        return {int(p) for p in csv.split(",") if p.strip() != ""}
+
+    def _row_to_schedule(self, row: sqlite3.Row) -> Schedule:
+        return Schedule(
+            id=row["id"],
+            title=row["title"],
+            description=row["description"],
+            priority=Priority(row["priority"]),
+            category=row["category"],
+            start_date=row["start_date"],
+            end_date=row["end_date"],
+            freq=Frequency(row["freq"]),
+            weekdays=self._csv_to_weekdays(row["weekdays"]),
+            cancelled_from=row["cancelled_from"],
+            sort_order=row["sort_order"],
+            created_at=row["created_at"],
+        )
+
+    def add_schedule(self, schedule: Schedule) -> Schedule:
+        cur = self._conn.execute(
+            """INSERT INTO schedules
+                   (title, description, priority, category, start_date, end_date,
+                    freq, weekdays, cancelled_from, sort_order, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (schedule.title, schedule.description, int(schedule.priority),
+             schedule.category, schedule.start_date, schedule.end_date,
+             schedule.freq.value, self._weekdays_to_csv(schedule.weekdays),
+             schedule.cancelled_from, schedule.sort_order, schedule.created_at),
+        )
+        self._conn.commit()
+        schedule.id = cur.lastrowid
+        return schedule
+
+    def get_schedule(self, schedule_id: int) -> Optional[Schedule]:
+        row = self._conn.execute(
+            f"SELECT {_SCHED_COLUMNS} FROM schedules WHERE id = ?", (schedule_id,)
+        ).fetchone()
+        return self._row_to_schedule(row) if row else None
+
+    def list_schedules(self) -> List[Schedule]:
+        rows = self._conn.execute(
+            f"SELECT {_SCHED_COLUMNS} FROM schedules ORDER BY sort_order ASC, id ASC"
+        ).fetchall()
+        return [self._row_to_schedule(r) for r in rows]
+
+    def update_schedule(self, schedule: Schedule) -> None:
+        if schedule.id is None:
+            raise ValueError("Cannot update a schedule without an id.")
+        self._conn.execute(
+            """UPDATE schedules SET
+                   title = ?, description = ?, priority = ?, category = ?,
+                   start_date = ?, end_date = ?, freq = ?, weekdays = ?,
+                   cancelled_from = ?, sort_order = ?
+               WHERE id = ?""",
+            (schedule.title, schedule.description, int(schedule.priority),
+             schedule.category, schedule.start_date, schedule.end_date,
+             schedule.freq.value, self._weekdays_to_csv(schedule.weekdays),
+             schedule.cancelled_from, schedule.sort_order, schedule.id),
+        )
+        self._conn.commit()
+
+    def delete_schedule(self, schedule_id: int) -> None:
+        # ON DELETE CASCADE removes the overrides too.
+        self._conn.execute("DELETE FROM schedules WHERE id = ?", (schedule_id,))
+        self._conn.commit()
+
+    def set_cancelled_from(self, schedule_id: int, iso_date: Optional[str]) -> None:
+        self._conn.execute(
+            "UPDATE schedules SET cancelled_from = ? WHERE id = ?",
+            (iso_date, schedule_id),
+        )
+        self._conn.commit()
+
+    # ---- schedule per-day overrides -------------------------------------
+    def set_override(self, schedule_id: int, date: str, status: str) -> None:
+        self._conn.execute(
+            """INSERT INTO schedule_overrides (schedule_id, date, status)
+               VALUES (?, ?, ?)
+               ON CONFLICT(schedule_id, date) DO UPDATE SET status = excluded.status""",
+            (schedule_id, date, status),
+        )
+        self._conn.commit()
+
+    def clear_override(self, schedule_id: int, date: str) -> None:
+        self._conn.execute(
+            "DELETE FROM schedule_overrides WHERE schedule_id = ? AND date = ?",
+            (schedule_id, date),
+        )
+        self._conn.commit()
+
+    def get_override(self, schedule_id: int, date: str) -> Optional[str]:
+        row = self._conn.execute(
+            "SELECT status FROM schedule_overrides WHERE schedule_id = ? AND date = ?",
+            (schedule_id, date),
+        ).fetchone()
+        return row["status"] if row else None
+
+    def list_overrides(self, schedule_id: int) -> Dict[str, str]:
+        rows = self._conn.execute(
+            "SELECT date, status FROM schedule_overrides WHERE schedule_id = ?",
+            (schedule_id,),
+        ).fetchall()
+        return {r["date"]: r["status"] for r in rows}
 
     def close(self) -> None:
         self._conn.close()

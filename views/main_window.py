@@ -1,11 +1,12 @@
 """Main application window: task table with create/edit/delete/complete + sorting."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QDate, Qt
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDateEdit,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from controllers.task_controller import TaskController
+from models.schedule import Occurrence
 from models.task import Task
 from services import notifier
 from views import theme
@@ -88,6 +90,30 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._sort)
         root.addLayout(toolbar)
 
+        # Day row: which calendar day the scheduled tasks are shown for.
+        day_row = QHBoxLayout()
+        self._prev_day_btn = QPushButton("◀")
+        self._next_day_btn = QPushButton("▶")
+        self._today_btn = QPushButton("Today")
+        for b in (self._prev_day_btn, self._next_day_btn):
+            b.setFixedWidth(32)
+        self._day = QDateEdit()
+        self._day.setCalendarPopup(True)
+        self._day.setDisplayFormat("ddd, yyyy-MM-dd")
+        self._day.setDate(QDate.currentDate())
+        self._day.dateChanged.connect(self.refresh)
+        self._prev_day_btn.clicked.connect(lambda: self._step_day(-1))
+        self._next_day_btn.clicked.connect(lambda: self._step_day(1))
+        self._today_btn.clicked.connect(lambda: self._day.setDate(QDate.currentDate()))
+
+        day_row.addWidget(QLabel("Day:"))
+        day_row.addWidget(self._prev_day_btn)
+        day_row.addWidget(self._day)
+        day_row.addWidget(self._next_day_btn)
+        day_row.addWidget(self._today_btn)
+        day_row.addStretch(1)
+        root.addLayout(day_row)
+
         # Filter row: search + status + category.
         filters = QHBoxLayout()
         self._search = QLineEdit()
@@ -136,28 +162,41 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(central)
 
+    # ---- day selection ---------------------------------------------------
+    def _selected_date(self) -> str:
+        return self._day.date().toString("yyyy-MM-dd")
+
+    def _step_day(self, delta: int) -> None:
+        self._day.setDate(self._day.date().addDays(delta))
+
     # ---- data <-> view ---------------------------------------------------
     def refresh(self) -> None:
         order_by = self._sort.currentData()
-        all_tasks = self._controller.list_tasks(order_by=order_by)
+        tasks = self._controller.list_tasks(order_by=order_by)
+        # Scheduled occurrences for the selected day, most-urgent first.
+        occurrences = sorted(
+            self._controller.occurrences_on(self._selected_date()),
+            key=lambda o: (-int(o.priority), o.title.lower()),
+        )
+        # One-off tasks are always shown; occurrences follow, grouped after them.
+        all_rows = list(tasks) + occurrences
 
-        self._sync_category_filter(all_tasks)
+        self._sync_category_filter(all_rows)
 
         # Dragging to reorder only makes sense under manual ordering.
-        manual = order_by == "sort_order"
-        self._table.set_reorder_enabled(manual)
+        self._table.set_reorder_enabled(order_by == "sort_order")
 
-        tasks = [t for t in all_tasks if self._passes_filters(t)]
-        self._table.setRowCount(len(tasks))
-        for row, task in enumerate(tasks):
-            self._populate_row(row, task)
+        rows = [item for item in all_rows if self._passes_filters(item)]
+        self._table.setRowCount(len(rows))
+        for row, item in enumerate(rows):
+            self._populate_row(row, item)
 
-        total = len(all_tasks)
-        done = sum(1 for t in all_tasks if t.completed)
-        showing = len(tasks)
+        total = len(all_rows)
+        done = sum(1 for t in all_rows if t.completed)
+        showing = len(rows)
         suffix = "" if showing == total else f" · showing {showing}"
         self._status.setText(
-            f"{total} task(s) · {done} completed · {total - done} open{suffix}"
+            f"{total} item(s) · {done} completed · {total - done} open{suffix}"
         )
 
         self._undo_btn.setEnabled(self._controller.can_undo())
@@ -194,12 +233,14 @@ class MainWindow(QMainWindow):
         self._controller.reorder_tasks(ordered_ids)
         self.refresh()
 
-    def _populate_row(self, row: int, task: Task) -> None:
+    def _populate_row(self, row: int, task) -> None:
         status = QTableWidgetItem("✓" if task.completed else "")
         status.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Recurring occurrences get a marker so they read differently from tasks.
+        title = f"🔁 {task.title}" if isinstance(task, Occurrence) else task.title
         cells = [
             status,
-            QTableWidgetItem(task.title),
+            QTableWidgetItem(title),
             QTableWidgetItem(task.priority.label),
             QTableWidgetItem(task.deadline or "—"),
             QTableWidgetItem(task.category or "—"),
@@ -217,58 +258,125 @@ class MainWindow(QMainWindow):
                 item.setForeground(self._overdue_color)
             self._table.setItem(row, col, item)
 
-    def _selected_task(self) -> Task | None:
+    def _selected_item(self):
+        """Return the selected row's Task or Occurrence, or None."""
         row = self._table.currentRow()
         if row < 0:
             return None
         item = self._table.item(row, 0)
         return item.data(Qt.ItemDataRole.UserRole) if item else None
 
+    @staticmethod
+    def _apply_schedule_values(schedule, values: dict) -> None:
+        schedule.title = values["title"]
+        schedule.description = values["description"]
+        schedule.priority = values["priority"]
+        schedule.category = values["category"]
+        schedule.start_date = values["start_date"]
+        schedule.end_date = values["end_date"]
+        schedule.freq = values["freq"]
+        schedule.weekdays = values["weekdays"]
+
     # ---- actions ---------------------------------------------------------
     def _on_add(self) -> None:
         dialog = TaskDialog(self)
         if dialog.exec() == TaskDialog.DialogCode.Accepted:
             values = dialog.get_values()
-            self._controller.create_task(**values)
+            if values.pop("schedule"):
+                self._controller.create_schedule(**values)
+            else:
+                self._controller.create_task(**values)
             self.refresh()
 
     def _on_edit(self) -> None:
-        task = self._selected_task()
-        if task is None:
+        item = self._selected_item()
+        if item is None:
             self._warn_no_selection()
             return
+        if isinstance(item, Occurrence):
+            self._edit_schedule(item)
+        else:
+            self._edit_task(item)
+
+    def _edit_task(self, task: Task) -> None:
         dialog = TaskDialog(self, task=task)
-        if dialog.exec() == TaskDialog.DialogCode.Accepted:
-            values = dialog.get_values()
+        if dialog.exec() != TaskDialog.DialogCode.Accepted:
+            return
+        values = dialog.get_values()
+        if values.pop("schedule"):
+            # Converted a one-off task into a schedule.
+            self._controller.delete_task(task.id)
+            self._controller.create_schedule(**values)
+        else:
             task.title = values["title"]
             task.description = values["description"]
             task.priority = values["priority"]
             task.deadline = values["deadline"]
             task.category = values["category"]
             self._controller.update_task(task)
-            self.refresh()
+        self.refresh()
+
+    def _edit_schedule(self, occurrence: Occurrence) -> None:
+        schedule = self._controller.get_schedule(occurrence.schedule_id)
+        if schedule is None:
+            return
+        dialog = TaskDialog(self, schedule=schedule)
+        if dialog.exec() != TaskDialog.DialogCode.Accepted:
+            return
+        values = dialog.get_values()
+        if values.pop("schedule"):
+            self._apply_schedule_values(schedule, values)
+            self._controller.update_schedule(schedule)
+        else:
+            # Converted a schedule into a one-off task.
+            self._controller.delete_schedule(schedule.id)
+            self._controller.create_task(**values)
+        self.refresh()
 
     def _on_delete(self) -> None:
-        task = self._selected_task()
-        if task is None:
+        item = self._selected_item()
+        if item is None:
             self._warn_no_selection()
+            return
+        if isinstance(item, Occurrence):
+            self._delete_occurrence(item)
             return
         confirm = QMessageBox.question(
             self,
             "Delete task",
-            f"Delete “{task.title}”?",
+            f"Delete “{item.title}”?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if confirm == QMessageBox.StandardButton.Yes:
-            self._controller.delete_task(task.id)
+            self._controller.delete_task(item.id)
+            self.refresh()
+
+    def _delete_occurrence(self, occurrence: Occurrence) -> None:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Cancel scheduled task")
+        box.setText(f"Cancel “{occurrence.title}” on {occurrence.date}?")
+        day_btn = box.addButton("This day only", QMessageBox.ButtonRole.AcceptRole)
+        rest_btn = box.addButton("From this day on", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("Keep", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is day_btn:
+            self._controller.cancel_occurrence_day(occurrence.schedule_id, occurrence.date)
+            self.refresh()
+        elif clicked is rest_btn:
+            self._controller.cancel_schedule_from(occurrence.schedule_id, occurrence.date)
             self.refresh()
 
     def _on_toggle_complete(self) -> None:
-        task = self._selected_task()
-        if task is None:
+        item = self._selected_item()
+        if item is None:
             self._warn_no_selection()
             return
-        self._controller.toggle_completed(task)
+        if isinstance(item, Occurrence):
+            self._controller.toggle_occurrence(item.schedule_id, item.date)
+        else:
+            self._controller.toggle_completed(item)
         self.refresh()
 
     def _on_undo(self) -> None:
