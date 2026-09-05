@@ -67,7 +67,7 @@ class MainWindow(QMainWindow):
         self._complete_btn.clicked.connect(self._on_toggle_complete)
         self._undo_btn.clicked.connect(self._on_undo)
 
-        self._dark_btn = QPushButton("🌙 Dark")
+        self._dark_btn = QPushButton("☀ Light" if self._dark else "🌙 Dark")
         self._dark_btn.setCheckable(True)
         self._dark_btn.setChecked(self._dark)
         self._dark_btn.toggled.connect(self._on_toggle_dark)
@@ -125,6 +125,8 @@ class MainWindow(QMainWindow):
         self._status_filter.addItem("All", "all")
         self._status_filter.addItem("Open", "open")
         self._status_filter.addItem("Completed", "completed")
+        # Default to Open so completed tasks drop out of the list once ticked.
+        self._status_filter.setCurrentIndex(self._status_filter.findData("open"))
         self._status_filter.currentIndexChanged.connect(self.refresh)
 
         self._category_filter = QComboBox()
@@ -259,12 +261,22 @@ class MainWindow(QMainWindow):
             self._table.setItem(row, col, item)
 
     def _selected_item(self):
-        """Return the selected row's Task or Occurrence, or None."""
+        """Return the focused row's Task or Occurrence, or None (for single-item ops)."""
         row = self._table.currentRow()
         if row < 0:
             return None
         item = self._table.item(row, 0)
         return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def _selected_items(self) -> list:
+        """Every selected row's Task/Occurrence, top-to-bottom."""
+        rows = sorted({idx.row() for idx in self._table.selectionModel().selectedRows()})
+        items = []
+        for r in rows:
+            cell = self._table.item(r, 0)
+            if cell is not None:
+                items.append(cell.data(Qt.ItemDataRole.UserRole))
+        return items
 
     @staticmethod
     def _apply_schedule_values(schedule, values: dict) -> None:
@@ -334,22 +346,40 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def _on_delete(self) -> None:
-        item = self._selected_item()
-        if item is None:
+        items = self._selected_items()
+        if not items:
             self._warn_no_selection()
             return
-        if isinstance(item, Occurrence):
-            self._delete_occurrence(item)
+        if len(items) == 1:
+            item = items[0]
+            if isinstance(item, Occurrence):
+                self._delete_occurrence(item)
+                return
+            confirm = QMessageBox.question(
+                self,
+                "Delete task",
+                f"Delete “{item.title}”?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if confirm == QMessageBox.StandardButton.Yes:
+                self._controller.delete_task(item.id)
+                self.refresh()
             return
+        # Bulk: tasks are deleted; scheduled occurrences are cancelled for that day.
         confirm = QMessageBox.question(
             self,
-            "Delete task",
-            f"Delete “{item.title}”?",
+            "Delete items",
+            f"Delete/cancel {len(items)} selected item(s)?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
-        if confirm == QMessageBox.StandardButton.Yes:
-            self._controller.delete_task(item.id)
-            self.refresh()
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        for item in items:
+            if isinstance(item, Occurrence):
+                self._controller.cancel_occurrence_day(item.schedule_id, item.date)
+            else:
+                self._controller.delete_task(item.id)
+        self.refresh()
 
     def _delete_occurrence(self, occurrence: Occurrence) -> None:
         box = QMessageBox(self)
@@ -369,14 +399,15 @@ class MainWindow(QMainWindow):
             self.refresh()
 
     def _on_toggle_complete(self) -> None:
-        item = self._selected_item()
-        if item is None:
+        items = self._selected_items()
+        if not items:
             self._warn_no_selection()
             return
-        if isinstance(item, Occurrence):
-            self._controller.toggle_occurrence(item.schedule_id, item.date)
-        else:
-            self._controller.toggle_completed(item)
+        for item in items:
+            if isinstance(item, Occurrence):
+                self._controller.toggle_occurrence(item.schedule_id, item.date)
+            else:
+                self._controller.toggle_completed(item)
         self.refresh()
 
     def _on_undo(self) -> None:
