@@ -121,7 +121,7 @@ class TaskDialog(QDialog):
             edit.setDate(QDate.currentDate())
 
         self._freq = QComboBox()
-        for f in (Frequency.DAILY, Frequency.WEEKLY, Frequency.MONTHLY):
+        for f in (Frequency.DAILY, Frequency.WEEKLY, Frequency.MONTHLY, Frequency.CUSTOM):
             self._freq.addItem(f.label, f)
         self._freq.currentIndexChanged.connect(self._update_weekday_visibility)
 
@@ -137,7 +137,7 @@ class TaskDialog(QDialog):
         layout.addRow("Start", self._start_date)
         layout.addRow("End", self._end_date)
         layout.addRow("Frequency", self._freq)
-        layout.addRow("On", self._weekday_row)
+        layout.addRow("Repeat on", self._weekday_row)
         self._schedule_form = layout
         return widget
 
@@ -150,8 +150,10 @@ class TaskDialog(QDialog):
         self.adjustSize()
 
     def _update_weekday_visibility(self) -> None:
-        weekly = self._freq.currentData() is Frequency.WEEKLY
-        self._schedule_form.setRowVisible(self._weekday_row, weekly)
+        # Weekday pickers only apply to a Custom recurrence. currentData() may come
+        # back as the flattened str value (Frequency is a str-Enum), so coerce.
+        custom = Frequency(self._freq.currentData()) is Frequency.CUSTOM
+        self._schedule_form.setRowVisible(self._weekday_row, custom)
 
     # ---- populate when editing ------------------------------------------
     def _load_common(self, title, description, priority, category) -> None:

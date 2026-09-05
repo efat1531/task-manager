@@ -19,8 +19,9 @@ from models.task import Priority
 
 class Frequency(str, Enum):
     DAILY = "daily"
-    WEEKLY = "weekly"
+    WEEKLY = "weekly"        # once a week, on the start date's weekday
     MONTHLY = "monthly"
+    CUSTOM = "custom"        # only on an explicitly chosen set of weekdays
 
     @property
     def label(self) -> str:
@@ -92,6 +93,10 @@ def occurs_on(schedule: Schedule, day: date) -> bool:
     if schedule.freq is Frequency.DAILY:
         return True
     if schedule.freq is Frequency.WEEKLY:
+        # Once a week, on the start date's weekday.
+        return day.weekday() == start.weekday()
+    if schedule.freq is Frequency.CUSTOM:
+        # Only on the explicitly chosen weekdays (falls back to the start weekday).
         weekdays = schedule.weekdays or {start.weekday()}
         return day.weekday() in weekdays
     if schedule.freq is Frequency.MONTHLY:

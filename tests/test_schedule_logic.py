@@ -35,9 +35,9 @@ def test_daily_occurs_every_day():
     assert occurs_on(s, date(2026, 3, 6)) is False   # after range
 
 
-def test_weekly_multiple_weekdays():
+def test_custom_multiple_weekdays():
     # Mon=0, Thu=3, Fri=4.  2026-03-02 is a Monday.
-    s = _sched(freq=Frequency.WEEKLY, weekdays={0, 3, 4},
+    s = _sched(freq=Frequency.CUSTOM, weekdays={0, 3, 4},
                start_date="2026-03-01", end_date="2026-03-31")
     assert occurs_on(s, date(2026, 3, 2)) is True   # Monday
     assert occurs_on(s, date(2026, 3, 5)) is True   # Thursday
@@ -46,11 +46,17 @@ def test_weekly_multiple_weekdays():
     assert occurs_on(s, date(2026, 3, 8)) is False  # Sunday
 
 
-def test_weekly_defaults_to_start_weekday():
-    # No weekdays chosen -> uses the start date's weekday (2026-03-04 is Wed).
-    s = _sched(freq=Frequency.WEEKLY, weekdays=set(),
-               start_date="2026-03-04", end_date="2026-03-31")
+def test_weekly_is_once_a_week_on_start_weekday():
+    # Weekly ignores weekday picks; it repeats on the start weekday (2026-03-04 is Wed).
+    s = _sched(freq=Frequency.WEEKLY, start_date="2026-03-04", end_date="2026-03-31")
     assert occurs_on(s, date(2026, 3, 11)) is True   # next Wednesday
+    assert occurs_on(s, date(2026, 3, 12)) is False  # Thursday
+
+
+def test_custom_defaults_to_start_weekday_when_none_chosen():
+    s = _sched(freq=Frequency.CUSTOM, weekdays=set(),
+               start_date="2026-03-04", end_date="2026-03-31")
+    assert occurs_on(s, date(2026, 3, 11)) is True   # Wednesday
     assert occurs_on(s, date(2026, 3, 12)) is False  # Thursday
 
 
@@ -115,10 +121,10 @@ def test_cancel_from_forward_keeps_past(controller):
 
 def test_schedule_round_trip_persists_fields(controller):
     controller.create_schedule("Review", "2026-03-01", "2026-03-31",
-                               freq=Frequency.WEEKLY, weekdays={0, 4},
+                               freq=Frequency.CUSTOM, weekdays={0, 4},
                                description="weekly review", category="Work")
     (s,) = controller._repo.list_schedules()
-    assert s.freq is Frequency.WEEKLY
+    assert s.freq is Frequency.CUSTOM
     assert s.weekdays == {0, 4}
     assert s.category == "Work"
     assert s.description == "weekly review"
