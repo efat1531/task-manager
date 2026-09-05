@@ -5,6 +5,7 @@ following the MVC layering described in the design document.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -15,8 +16,35 @@ from controllers.task_controller import TaskController
 from models.task_repository import TaskRepository
 from views.main_window import MainWindow
 
-BASE_DIR = Path(__file__).parent
-DB_PATH = BASE_DIR / "data" / "tasks.db"
+
+def _resource_dir() -> Path:
+    """Directory holding bundled read-only resources (assets).
+
+    When frozen by PyInstaller, data files are unpacked under ``sys._MEIPASS``;
+    otherwise they sit next to this script.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+    return Path(__file__).parent
+
+
+def _data_dir() -> Path:
+    """Writable directory for the database.
+
+    A frozen one-file exe is extracted to a temporary folder that is wiped on
+    exit, so the database must live in a persistent per-user location instead.
+    """
+    if getattr(sys, "frozen", False):
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
+        directory = Path(base) / "TaskManager"
+    else:
+        directory = Path(__file__).parent / "data"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+BASE_DIR = _resource_dir()
+DB_PATH = _data_dir() / "tasks.db"
 ICON_PATH = BASE_DIR / "assets" / "icon.png"
 
 
