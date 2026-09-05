@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS schedule_overrides (
     PRIMARY KEY (schedule_id, date),
     FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS pr_links (
+    pr_key     TEXT    PRIMARY KEY,        -- "{org}:{pullRequestId}"
+    task_id    INTEGER NOT NULL,
+    created_at TEXT    NOT NULL
+);
 """
 
 # Column order used by _row_to_task / SELECT statements.
@@ -282,6 +288,34 @@ class TaskRepository:
             (schedule_id,),
         ).fetchall()
         return {r["date"]: r["status"] for r in rows}
+
+    # ---- pull-request links (Azure integration) -------------------------
+    def link_pr(self, pr_key: str, task_id: int) -> None:
+        """Record that ``pr_key`` produced ``task_id``. Kept even if the task is
+        later deleted, so the PR is never turned into a task a second time."""
+        from datetime import datetime
+
+        self._conn.execute(
+            """INSERT INTO pr_links (pr_key, task_id, created_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(pr_key) DO UPDATE SET task_id = excluded.task_id""",
+            (pr_key, task_id, datetime.now().isoformat(timespec="seconds")),
+        )
+        self._conn.commit()
+
+    def get_pr_link(self, pr_key: str) -> Optional[int]:
+        row = self._conn.execute(
+            "SELECT task_id FROM pr_links WHERE pr_key = ?", (pr_key,)
+        ).fetchone()
+        return row["task_id"] if row else None
+
+    def list_pr_links(self) -> Dict[str, int]:
+        rows = self._conn.execute("SELECT pr_key, task_id FROM pr_links").fetchall()
+        return {r["pr_key"]: r["task_id"] for r in rows}
+
+    def delete_pr_link(self, pr_key: str) -> None:
+        self._conn.execute("DELETE FROM pr_links WHERE pr_key = ?", (pr_key,))
+        self._conn.commit()
 
     def close(self) -> None:
         self._conn.close()

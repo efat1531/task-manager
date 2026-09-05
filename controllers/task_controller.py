@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Callable, List, Optional, Set, Tuple
 
+from models.integration import PullRequest, pr_key, pr_to_task_fields
 from models.schedule import Frequency, Occurrence, Schedule, occurs_on
 from models.task import Priority, Task
 from models.task_repository import TaskRepository
@@ -184,6 +185,47 @@ class TaskController:
                 lambda sid=schedule_id, p=previous: self._repo.set_cancelled_from(sid, p),
             )
         )
+
+    # ---- Azure pull-request sync ----------------------------------------
+    def sync_pull_requests(
+        self, prs: List[PullRequest], organization: str
+    ) -> dict:
+        """Reconcile the fetched review-requested PRs against existing links.
+
+        The network fetch happens in the caller (a background worker); this method
+        is pure DB logic so the dedup + auto-complete behaviour stays testable.
+
+        - A PR with no existing link becomes a new task (and is linked).
+        - A PR that already has a link is skipped — never duplicated, even if its
+          task was since edited or deleted.
+        - A previously-linked PR that is *absent* from ``prs`` (merged, abandoned,
+          or the user was dropped as a required reviewer) has its task completed.
+        """
+        existing = self._repo.list_pr_links()
+        current_keys = set()
+        created = skipped = completed = 0
+
+        for pr in prs:
+            key = pr_key(organization, pr.pr_id)
+            current_keys.add(key)
+            if key in existing:
+                skipped += 1
+                continue
+            fields = pr_to_task_fields(pr)
+            task = self.create_task(**fields)
+            self._repo.link_pr(key, task.id)
+            created += 1
+
+        # Auto-complete tasks for PRs that are no longer open review requests.
+        for key, task_id in existing.items():
+            if key in current_keys:
+                continue
+            task = self._repo.get(task_id)
+            if task is not None and not task.completed:
+                self._repo.set_completed(task_id, True)
+                completed += 1
+
+        return {"created": created, "skipped": skipped, "completed": completed}
 
     # ---- undo ------------------------------------------------------------
     def can_undo(self) -> bool:

@@ -1,7 +1,7 @@
 """Main application window: task table with create/edit/delete/complete + sorting."""
 from __future__ import annotations
 
-from PySide6.QtCore import QDate, Qt
+from PySide6.QtCore import QDate, Qt, QTimer
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -24,6 +25,7 @@ from models.schedule import Occurrence
 from models.task import Task
 from services import notifier
 from views import theme
+from views.integration_tab import IntegrationTab
 from views.task_dialog import TaskDialog
 from views.task_list import TaskTable
 
@@ -51,6 +53,21 @@ class MainWindow(QMainWindow):
 
     # ---- UI construction -------------------------------------------------
     def _build_ui(self) -> None:
+        self._tabs = QTabWidget()
+        self._tabs.addTab(self._build_tasks_tab(), "Tasks")
+
+        self._integration_tab = IntegrationTab()
+        self._integration_tab.prs_fetched.connect(self._on_prs_fetched)
+        self._tabs.addTab(self._integration_tab, "Integrations")
+
+        self.setCentralWidget(self._tabs)
+
+        # Background auto-poll for the Azure integration.
+        self._poll_timer = QTimer(self)
+        self._poll_timer.timeout.connect(self._auto_sync)
+        self._start_poll_timer()
+
+    def _build_tasks_tab(self) -> QWidget:
         central = QWidget()
         root = QVBoxLayout(central)
 
@@ -162,7 +179,7 @@ class MainWindow(QMainWindow):
         self._status = QLabel()
         root.addWidget(self._status)
 
-        self.setCentralWidget(central)
+        return central
 
     # ---- day selection ---------------------------------------------------
     def _selected_date(self) -> str:
@@ -417,6 +434,25 @@ class MainWindow(QMainWindow):
         self._controller.undo()
         self.refresh()
         self._status.setText(f"Undid {label}.")
+
+    # ---- Azure integration ----------------------------------------------
+    def _on_prs_fetched(self, prs: list, organization: str) -> None:
+        """A background sync returned PRs; reconcile them and refresh the list."""
+        summary = self._controller.sync_pull_requests(prs, organization)
+        self._integration_tab.report_sync_result(summary)
+        self._start_poll_timer()  # pick up any interval/enabled change
+        self.refresh()
+
+    def _auto_sync(self) -> None:
+        self._integration_tab.trigger_sync(auto=True)
+
+    def _start_poll_timer(self) -> None:
+        """(Re)start the auto-poll timer from the saved config, or stop it."""
+        cfg = self._integration_tab.current_config()
+        if cfg.is_configured():
+            self._poll_timer.start(max(1, cfg.poll_minutes) * 60_000)
+        else:
+            self._poll_timer.stop()
 
     # ---- theme -----------------------------------------------------------
     def _apply_theme(self) -> None:
