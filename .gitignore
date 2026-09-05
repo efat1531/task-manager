@@ -14,8 +14,9 @@ data/*.db-shm
 # Packaging
 build/
 dist/
+# keep the committed build spec (used locally and by CI)
 *.spec
-!task_manager.spec   # keep the committed build spec (used locally and by CI)
+!task_manager.spec
 
 # IDE / OS
 .vscode/
