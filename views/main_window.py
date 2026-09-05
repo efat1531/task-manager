@@ -4,7 +4,6 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QColor, QFont
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QComboBox,
     QHBoxLayout,
     QHeaderView,
@@ -12,7 +11,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -21,6 +19,9 @@ from PySide6.QtWidgets import (
 from controllers.task_controller import TaskController
 from models.task import Task
 from views.task_dialog import TaskDialog
+from views.task_list import TaskTable
+
+_ALL_CATEGORIES = "All categories"
 
 # Columns: [status, title, priority, deadline, category]
 _HEADERS = ["✓", "Title", "Priority", "Deadline", "Category"]
@@ -68,14 +69,32 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._sort)
         root.addLayout(toolbar)
 
+        # Filter row: status + category.
+        filters = QHBoxLayout()
+        self._status_filter = QComboBox()
+        self._status_filter.addItem("All", "all")
+        self._status_filter.addItem("Open", "open")
+        self._status_filter.addItem("Completed", "completed")
+        self._status_filter.currentIndexChanged.connect(self.refresh)
+
+        self._category_filter = QComboBox()
+        self._category_filter.addItem(_ALL_CATEGORIES)
+        self._category_filter.currentIndexChanged.connect(self.refresh)
+
+        filters.addWidget(QLabel("Status:"))
+        filters.addWidget(self._status_filter)
+        filters.addSpacing(12)
+        filters.addWidget(QLabel("Category:"))
+        filters.addWidget(self._category_filter)
+        filters.addStretch(1)
+        root.addLayout(filters)
+
         # Table.
-        self._table = QTableWidget(0, len(_HEADERS))
+        self._table = TaskTable(0, len(_HEADERS))
         self._table.setHorizontalHeaderLabels(_HEADERS)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
         self._table.doubleClicked.connect(self._on_edit)
+        self._table.rows_reordered.connect(self._on_rows_reordered)
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -91,13 +110,53 @@ class MainWindow(QMainWindow):
     # ---- data <-> view ---------------------------------------------------
     def refresh(self) -> None:
         order_by = self._sort.currentData()
-        tasks = self._controller.list_tasks(order_by=order_by)
+        all_tasks = self._controller.list_tasks(order_by=order_by)
+
+        self._sync_category_filter(all_tasks)
+
+        # Dragging to reorder only makes sense under manual ordering.
+        manual = order_by == "sort_order"
+        self._table.set_reorder_enabled(manual)
+
+        tasks = [t for t in all_tasks if self._passes_filters(t)]
         self._table.setRowCount(len(tasks))
         for row, task in enumerate(tasks):
             self._populate_row(row, task)
-        total = len(tasks)
-        done = sum(1 for t in tasks if t.completed)
-        self._status.setText(f"{total} task(s) · {done} completed · {total - done} open")
+
+        total = len(all_tasks)
+        done = sum(1 for t in all_tasks if t.completed)
+        showing = len(tasks)
+        suffix = "" if showing == total else f" · showing {showing}"
+        self._status.setText(
+            f"{total} task(s) · {done} completed · {total - done} open{suffix}"
+        )
+
+    def _passes_filters(self, task: Task) -> bool:
+        status = self._status_filter.currentData()
+        if status == "open" and task.completed:
+            return False
+        if status == "completed" and not task.completed:
+            return False
+        category = self._category_filter.currentText()
+        if category != _ALL_CATEGORIES and (task.category or "") != category:
+            return False
+        return True
+
+    def _sync_category_filter(self, tasks: list[Task]) -> None:
+        """Rebuild the category dropdown from existing tasks, keeping the choice."""
+        categories = sorted({t.category for t in tasks if t.category})
+        current = self._category_filter.currentText()
+        self._category_filter.blockSignals(True)
+        self._category_filter.clear()
+        self._category_filter.addItem(_ALL_CATEGORIES)
+        self._category_filter.addItems(categories)
+        idx = self._category_filter.findText(current)
+        self._category_filter.setCurrentIndex(idx if idx >= 0 else 0)
+        self._category_filter.blockSignals(False)
+
+    def _on_rows_reordered(self, ordered_ids: list[int]) -> None:
+        self._controller.reorder_tasks(ordered_ids)
+        self.refresh()
 
     def _populate_row(self, row: int, task: Task) -> None:
         status = QTableWidgetItem("✓" if task.completed else "")

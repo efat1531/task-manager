@@ -54,3 +54,7 @@ class TaskController:
 
     def delete_task(self, task_id: int) -> None:
         self._repo.delete(task_id)
+
+    def reorder_tasks(self, ordered_ids: List[int]) -> None:
+        """Persist a new manual ordering given task ids in the desired order."""
+        self._repo.reorder(ordered_ids)

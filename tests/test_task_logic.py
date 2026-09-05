@@ -63,6 +63,18 @@ def test_delete_task(controller):
     assert controller.list_tasks() == []
 
 
+def test_reorder_persists_new_manual_order(controller):
+    a = controller.create_task("a")
+    b = controller.create_task("b")
+    c = controller.create_task("c")
+    controller.reorder_tasks([c.id, a.id, b.id])
+    titles = [t.title for t in controller.list_tasks(order_by="sort_order")]
+    assert titles == ["c", "a", "b"]
+    # sort_order values should be contiguous 0..n-1 in the new order.
+    orders = [t.sort_order for t in controller.list_tasks(order_by="sort_order")]
+    assert orders == [0, 1, 2]
+
+
 def test_sort_by_priority(controller):
     controller.create_task("low", priority=Priority.LOW)
     controller.create_task("high", priority=Priority.HIGH)

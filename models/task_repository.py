@@ -109,6 +109,14 @@ class TaskRepository:
         )
         self._conn.commit()
 
+    def reorder(self, ordered_ids: List[int]) -> None:
+        """Persist a new manual ordering: ``sort_order`` becomes list position."""
+        self._conn.executemany(
+            "UPDATE tasks SET sort_order = ? WHERE id = ?",
+            [(position, task_id) for position, task_id in enumerate(ordered_ids)],
+        )
+        self._conn.commit()
+
     def set_completed(self, task_id: int, completed: bool) -> None:
         self._conn.execute(
             "UPDATE tasks SET completed = ? WHERE id = ?",

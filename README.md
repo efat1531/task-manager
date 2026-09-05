@@ -10,8 +10,11 @@ deadlines with a calendar date picker, mark complete, SQLite persistence, and
 sorting by priority / deadline / created date. Overdue open tasks show in red;
 completed tasks show struck through.
 
+**Phase 2 — complete:** drag-and-drop row reordering that persists to
+`sort_order` (enabled only under "Manual order" sort), plus filtering by
+status (all / open / completed) and by category.
+
 Planned next:
-- **Phase 2:** drag-and-drop reordering (writes back `sort_order`), filtering.
 - **Phase 3:** notifications/reminders, categories/tags, search, dark mode, undo.
 - **Phase 4:** package per-OS with PyInstaller; CI tests.
 
@@ -25,8 +28,9 @@ models/
 controllers/
   task_controller.py         # mediates view <-> repository (no Qt imports)
 views/
-  main_window.py             # task table + toolbar + sorting
+  main_window.py             # task table + toolbar + sorting + filters
   task_dialog.py             # add/edit dialog with QDateEdit calendar
+  task_list.py               # drag-to-reorder QTableWidget subclass
 services/
   notifier.py                # (Phase 3) plyer notification wrapper
 data/tasks.db                # SQLite database (gitignored)
