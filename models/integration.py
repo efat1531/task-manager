@@ -58,8 +58,13 @@ def pr_key(organization: str, pr_id: int) -> str:
 
 
 def pr_to_task_fields(pr: PullRequest) -> dict:
-    """Map a pull request onto the fields used to create its task."""
-    lines = [f"Pull request #{pr.pr_id}"]
+    """Map a pull request onto the fields used to create its task.
+
+    Required reviews are High priority; optional reviews are Medium. The reviewer
+    role is also noted in the description.
+    """
+    role = "required" if pr.is_required else "optional"
+    lines = [f"Pull request #{pr.pr_id}", f"Your review: {role}"]
     if pr.repository:
         repo = f"{pr.project}/{pr.repository}" if pr.project else pr.repository
         lines.append(f"Repository: {repo}")
@@ -70,7 +75,7 @@ def pr_to_task_fields(pr: PullRequest) -> dict:
     return {
         "title": f"Review PR #{pr.pr_id}: {pr.title}",
         "description": "\n".join(lines),
-        "priority": Priority.HIGH,
+        "priority": Priority.HIGH if pr.is_required else Priority.MEDIUM,
         "category": "Azure PR",
         "deadline": None,
     }

@@ -94,7 +94,7 @@ def test_pr_to_task_fields_mapping():
 
 
 # ---- pure JSON parsing (no HTTP) -----------------------------------------
-def test_parse_prs_keeps_only_required_reviewer():
+def test_parse_prs_includes_required_and_optional_reviewer():
     me = "guid-me"
     payload = {
         "value": [
@@ -116,17 +116,25 @@ def test_parse_prs_keeps_only_required_reviewer():
             },
             {
                 "pullRequestId": 103,
-                "title": "Someone else required",
+                "title": "Someone else",
                 "reviewers": [{"id": "other", "isRequired": True}],
             },
         ]
     }
     prs = AzureDevOpsClient._parse_prs(payload, me)
-    assert [p.pr_id for p in prs] == [101]
-    only = prs[0]
-    assert only.title == "Required one"
-    assert only.repository == "web"
-    assert only.project == "Store"
-    assert only.author == "Bob"
-    assert only.url.endswith("/pr/101")
-    assert only.is_required is True
+    # Both my required and my optional PRs are kept; the one I'm not on is dropped.
+    assert [p.pr_id for p in prs] == [101, 102]
+    required, optional = prs
+    assert required.is_required is True
+    assert required.project == "Store"
+    assert required.author == "Bob"
+    assert required.url.endswith("/pr/101")
+    assert optional.is_required is False
+
+
+def test_optional_reviewer_task_is_medium_priority():
+    fields = pr_to_task_fields(
+        PullRequest(pr_id=5, title="Docs", repository="r", is_required=False)
+    )
+    assert fields["priority"] is Priority.MEDIUM
+    assert "optional" in fields["description"]

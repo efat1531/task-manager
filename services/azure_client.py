@@ -102,17 +102,19 @@ class AzureDevOpsClient:
     # ---- parsing (pure) --------------------------------------------------
     @staticmethod
     def _parse_prs(payload: dict, reviewer_id: str) -> List[PullRequest]:
-        """Build PullRequests, keeping only those where the given reviewer is
-        marked ``isRequired``. Pure: no network, safe to unit-test."""
+        """Build PullRequests for every PR where the given reviewer is listed —
+        whether they are a required or an optional reviewer. ``is_required``
+        records which. Pure: no network, safe to unit-test."""
         result: List[PullRequest] = []
         for item in payload.get("value", []):
-            required = False
+            matched = None
             for reviewer in item.get("reviewers", []):
                 if reviewer.get("id") == reviewer_id:
-                    required = bool(reviewer.get("isRequired"))
+                    matched = reviewer
                     break
-            if not required:
+            if matched is None:
                 continue
+            required = bool(matched.get("isRequired"))
             repo = item.get("repository") or {}
             project = (repo.get("project") or {}).get("name", "")
             created_by = item.get("createdBy") or {}
@@ -126,7 +128,7 @@ class AzureDevOpsClient:
                     author=created_by.get("displayName", ""),
                     url=web,
                     status=item.get("status", "active"),
-                    is_required=True,
+                    is_required=required,
                 )
             )
         return result

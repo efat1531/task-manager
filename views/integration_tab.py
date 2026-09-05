@@ -126,10 +126,10 @@ class IntegrationTab(QWidget):
         root.addWidget(self._status)
 
         help_text = QLabel(
-            "Any active pull request where you are a <b>required reviewer</b> becomes "
-            "a task. Each PR creates a task only once. When a PR is merged, abandoned, "
-            "or you are no longer a required reviewer, its task is marked complete on "
-            "the next sync."
+            "Any active pull request where you are a reviewer becomes a task — "
+            "<b>required</b> reviews are High priority, <b>optional</b> ones Medium. "
+            "Each PR creates a task only once. When a PR is merged, abandoned, or you "
+            "are no longer a reviewer, its task is marked complete on the next sync."
         )
         help_text.setWordWrap(True)
         help_text.setEnabled(False)
