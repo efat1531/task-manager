@@ -48,12 +48,30 @@ class TaskTable(QTableWidget):
         task = item.data(Qt.ItemDataRole.UserRole)
         return getattr(task, "id", None)
 
+    @staticmethod
+    def _drop_index_for_invalid(pos_y: int, row_count: int, first_row_top: int) -> int:
+        """Insertion index when the cursor is not over a valid row.
+
+        ``indexAt`` returns an invalid index both above the first row and below
+        the last one. Dragging a row all the way to the top lands the cursor
+        above row 0's rect, so decide by vertical position: above the first
+        row's top (or an empty table) inserts at the top, otherwise at the
+        bottom. Without this, a top drop was mis-read as ``rowCount()`` (bottom)
+        and silently became a no-op — the "move one row at a time" bug.
+        """
+        if row_count == 0 or pos_y < first_row_top:
+            return 0
+        return row_count
+
     def _drop_row(self, event) -> int:
         """Index at which the dragged rows should be inserted."""
         pos = event.position().toPoint()
         index = self.indexAt(pos)
         if not index.isValid():
-            return self.rowCount()
+            first_rect = self.visualRect(self.model().index(0, 0))
+            return self._drop_index_for_invalid(
+                pos.y(), self.rowCount(), first_rect.top()
+            )
         rect = self.visualRect(index)
         return index.row() if pos.y() < rect.center().y() else index.row() + 1
 
