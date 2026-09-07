@@ -8,7 +8,7 @@ commit ``v<APP_VERSION>`` (the release workflow asserts the two match).
 """
 from __future__ import annotations
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 
 #: ``owner/repo`` used to build the GitHub Releases API and download URLs.
 GITHUB_REPO = "efat1531/task-manager"

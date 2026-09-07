@@ -33,6 +33,7 @@ from models.task_repository import TaskRepository  # noqa: E402
 
 try:
     from views.main_window import MainWindow  # noqa: E402
+    from views import update_dialog  # noqa: E402
 except Exception as exc:  # pragma: no cover - no display/platform plugin
     pytest.skip(f"Qt widgets unavailable: {exc}", allow_module_level=True)
 
@@ -44,9 +45,16 @@ def app():
 
 
 @pytest.fixture
-def window(app):
+def window(app, monkeypatch):
+    # Neutralise the startup auto-updater: check_silent() spawns a background
+    # thread that hits GitHub, and maybe_show_whats_new() can pop a modal dialog
+    # — either would hang this headless widget test.
+    monkeypatch.setattr(update_dialog.UpdateManager, "check_silent", lambda self: None)
+    monkeypatch.setattr(update_dialog.UpdateManager, "maybe_show_whats_new", lambda self: None)
     db_path = os.path.join(tempfile.mkdtemp(), "tasks.db")
-    return MainWindow(TaskController(TaskRepository(db_path)))
+    win = MainWindow(TaskController(TaskRepository(db_path)))
+    yield win
+    win._updates.shutdown()
 
 
 def _plain(tid=1):
