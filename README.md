@@ -75,6 +75,10 @@ schedules, and auto-generate tasks from your Azure DevOps pull requests and Line
   bundled).
 - A **GitHub Actions** workflow runs the tests, builds the exe, and publishes a
   GitHub Release automatically on every version tag.
+- **Auto-update**: on launch the app checks GitHub for a newer release and, if one
+  exists, downloads and installs it in place before relaunching — no manual
+  re-download. Also available on demand from **Help → Check for updates…**, and a
+  **What's new** popup shows the changelog on the first launch after an update.
 
 ## Tech stack
 
@@ -113,9 +117,11 @@ views/
   task_list.py                # drag-to-reorder QTableWidget subclass
   integration_tab.py          # Azure DevOps config + Sync (background worker)
   linear_tab.py               # Linear config: teams, per-status priority, exclude labels + Sync
+  update_dialog.py            # auto-update: check/download workers + prompt & "what's new" dialogs
   theme.py                    # light/dark palettes + QSettings persistence
 services/
   notifier.py                 # plyer desktop-notification wrapper
+  updater.py                  # self-update: GitHub release check + download + self-replace (stdlib urllib)
   azure_client.py             # Azure DevOps REST client (stdlib urllib)
   linear_client.py            # Linear GraphQL client (stdlib urllib)
   credentials.py              # PAT / Linear key storage via OS keyring (with graceful fallback)
@@ -127,8 +133,10 @@ tests/
   test_integration_logic.py   # PR dedup / auto-complete / parsing / source + priority tests
   test_linear_logic.py        # Linear dedup / auto-complete / status-priority / exclusion / parsing tests
   test_export_logic.py        # per-day JSON export scoping + serialization tests
+  test_updater_logic.py       # version compare / asset pick / release parsing (no network)
+version.py                    # APP_VERSION + repo constants (single source of truth)
 assets/                       # app icons (png + multi-res ico)
-task_manager.spec             # PyInstaller build spec
+task_manager.spec             # PyInstaller build spec (bundles RELEASE_NOTES.md for the popup)
 .github/workflows/release.yml # CI: run tests, build exe, publish release on version tags
 data/tasks.db                 # SQLite database (gitignored)
 ```
@@ -214,12 +222,27 @@ pyinstaller task_manager.spec
 Produces the single-file `dist\TaskManager.exe` (windowed, with the app icon);
 `assets/` is bundled into the binary.
 
+## Staying up to date (end users)
+
+The app updates itself. On launch it quietly checks the
+[Releases page](https://github.com/efat1531/task-manager/releases) for a newer
+build; if one exists it offers to download and install it, then relaunches on the
+new version — no manual re-download. You can also check on demand from
+**Help → Check for updates…**. After an update, a **What's new** popup shows that
+version's changelog on first launch.
+
 ## Cutting a release
 
-Releases are automated. Tag a version and push the tag — GitHub Actions runs the
+Releases are automated. **Bump `APP_VERSION` in `version.py`** and update
+`RELEASE_NOTES.md` in the same commit, then tag that commit `v<APP_VERSION>` and
+push the tag — GitHub Actions verifies the tag matches `version.py`, runs the
 tests, builds the exe, and attaches it to a new GitHub Release:
 
 ```powershell
-git tag v1.0.1
-git push origin v1.0.1
+# 1. set APP_VERSION = "1.3.0" in version.py and edit RELEASE_NOTES.md, commit
+git tag v1.3.0
+git push origin v1.3.0
 ```
+
+The tag must equal `v` + `APP_VERSION`, or the release build fails fast — this
+keeps the version baked into the exe in sync with the release the updater sees.

@@ -29,11 +29,13 @@ from models import linkify
 from models.schedule import Occurrence
 from models.task import Task
 from services import notifier
+from version import APP_VERSION
 from views import theme
 from views.integration_tab import IntegrationTab
 from views.linear_tab import LinearIntegrationTab
 from views.task_dialog import TaskDialog
 from views.task_list import TaskTable
+from views.update_dialog import UpdateManager
 
 _ALL_CATEGORIES = "All categories"
 
@@ -49,9 +51,16 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Task Manager")
         self.resize(720, 480)
         self._build_ui()
+        self._build_menu()
         self._apply_theme()
         self.refresh()
         self._prompt_reminders()
+
+        # Auto-update: show the changelog once after an update, then quietly
+        # check GitHub for a newer release in the background.
+        self._updates = UpdateManager(self)
+        self._updates.maybe_show_whats_new()
+        self._updates.check_silent()
 
     @property
     def _overdue_color(self) -> QColor:
@@ -95,6 +104,29 @@ class MainWindow(QMainWindow):
         self._linear_poll_timer = QTimer(self)
         self._linear_poll_timer.timeout.connect(self._auto_sync_linear)
         self._start_linear_poll_timer()
+
+    def _build_menu(self) -> None:
+        """Menu bar: a Help menu hosting the update check and About box."""
+        help_menu = self.menuBar().addMenu("&Help")
+        check_action = help_menu.addAction("Check for updates…")
+        check_action.triggered.connect(self._on_check_for_updates)
+        about_action = help_menu.addAction("About Task Manager")
+        about_action.triggered.connect(self._on_about)
+
+    def _on_check_for_updates(self) -> None:
+        self._updates.check_manual()
+
+    def _on_about(self) -> None:
+        QMessageBox.about(
+            self,
+            "About Task Manager",
+            f"<b>Task Manager</b><br>Version {APP_VERSION}",
+        )
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        # Let any in-flight update check/download thread finish before we go.
+        self._updates.shutdown()
+        super().closeEvent(event)
 
     def _build_tasks_tab(self) -> QWidget:
         central = QWidget()
