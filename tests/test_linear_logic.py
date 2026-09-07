@@ -179,6 +179,25 @@ def test_sync_completes_task_when_issue_gains_excluded_label():
     assert ctrl.list_tasks()[0].completed is True
 
 
+def test_sync_reopens_task_when_excluded_label_removed():
+    # Mirrors the status reopen case: an excluded label auto-completes the task,
+    # and removing the label (making the issue eligible again) reopens it rather
+    # than leaving it stuck completed.
+    ctrl = TaskController(_repo())
+    cfg = _config(exclude_labels=["blocked"])
+    ctrl.sync_linear_issues([_issue("i1")], cfg)
+    # Label applied -> filtered out -> task auto-completed.
+    ctrl.sync_linear_issues([_issue("i1", labels=["blocked"])], cfg)
+    assert ctrl.list_tasks()[0].completed is True
+    # Label removed -> issue eligible again -> task reopened.
+    summary = ctrl.sync_linear_issues([_issue("i1")], cfg)
+    assert summary["reopened"] == 1
+    assert summary["created"] == 0
+    tasks = ctrl.list_tasks()
+    assert len(tasks) == 1
+    assert tasks[0].completed is False
+
+
 def test_excluded_issue_never_creates_a_task():
     ctrl = TaskController(_repo())
     cfg = _config(exclude_labels=["blocked"])

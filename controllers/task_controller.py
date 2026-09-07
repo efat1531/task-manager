@@ -385,8 +385,9 @@ class TaskController:
         - An eligible issue that already has a link is skipped, but its task's
           priority is refreshed to the ticket's current Linear priority so a
           re-prioritised ticket re-prioritises its task, and a task that was
-          auto-completed earlier is reopened if its ticket is eligible again
-          (moved back into a selected status).
+          auto-completed earlier is reopened if its ticket is eligible again —
+          whether it moved back into a selected status or shed the excluded
+          label that had removed it from the eligible set.
         - A previously-linked issue that is *absent* from the eligible set
           (moved to an unselected status, gained an excluded label, was
           reassigned, or deleted) has its task completed.
