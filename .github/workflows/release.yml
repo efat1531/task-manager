@@ -49,17 +49,32 @@ jobs:
       - name: Build executable
         run: pyinstaller task_manager.spec
 
-      - name: Upload build artifact
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        shell: bash
+        run: |
+          app_version="$(python -c 'from version import APP_VERSION; print(APP_VERSION)')"
+          # choco's innosetup package installs here but doesn't shim ISCC onto PATH.
+          iscc="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          "$iscc" "/DAppVersion=${app_version}" installer/task_manager.iss
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: TaskManager-exe
-          path: dist/TaskManager.exe
+          path: |
+            dist/TaskManager.exe
+            dist/TaskManager-Setup.exe
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/TaskManager.exe
+          files: |
+            dist/TaskManager.exe
+            dist/TaskManager-Setup.exe
           # Hand-written notes for the tagged release (update RELEASE_NOTES.md
           # per release); the auto-generated changelog is appended after them.
           body_path: RELEASE_NOTES.md

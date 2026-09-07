@@ -72,9 +72,9 @@ schedules, and auto-generate tasks from your Azure DevOps pull requests and Line
 
 ### Packaging & distribution
 - Builds to a **single-file Windows executable** with PyInstaller (windowed, app icon
-  bundled).
-- A **GitHub Actions** workflow runs the tests, builds the exe, and publishes a
-  GitHub Release automatically on every version tag.
+  bundled), plus a per-user **Inno Setup installer** (`TaskManager-Setup.exe`).
+- A **GitHub Actions** workflow runs the tests, builds the exe and installer, and
+  publishes a GitHub Release automatically on every version tag.
 - **Auto-update**: on launch the app checks GitHub for a newer release and, if one
   exists, downloads and installs it in place before relaunching — no manual
   re-download. Also available on demand from **Help → Check for updates…**, and a
@@ -145,10 +145,17 @@ data/tasks.db                 # SQLite database (gitignored)
 
 ### Download (end users)
 
-Grab the latest **`TaskManager.exe`** from the
-[Releases page](https://github.com/efat1531/task-manager/releases) — no Python
-install needed, just run it. Your data is stored per-user at
-`%LOCALAPPDATA%\TaskManager\tasks.db`.
+From the [Releases page](https://github.com/efat1531/task-manager/releases) —
+no Python install needed:
+
+- **Recommended:** download **`TaskManager-Setup.exe`** and run it. It installs
+  per-user (no administrator prompt), adds Start Menu and Desktop shortcuts, and
+  registers an uninstaller under **Settings → Apps**.
+- **Portable:** download the standalone **`TaskManager.exe`** and just run it, no
+  install.
+
+Either way, your data is stored per-user at
+`%LOCALAPPDATA%\TaskManager\tasks.db`, and the app keeps itself up to date.
 
 > Windows SmartScreen may warn about an unknown publisher because the exe is
 > unsigned — choose **More info → Run anyway**.
