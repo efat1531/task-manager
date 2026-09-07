@@ -334,8 +334,11 @@ class MainWindow(QMainWindow):
         self._table.setItem(row, 3, row_items[2])
         self._table.setItem(row, 4, row_items[3])
 
-        # Clear any link widget left over from a previous population of this row.
+        # Clear any link widget AND any leftover item from a previous population
+        # of this row index, so a transparent link QLabel is never drawn over
+        # stale item text (rows are reused across refresh()).
         self._table.removeCellWidget(row, 1)
+        self._table.takeItem(row, 1)
         if url:
             self._table.setCellWidget(row, 1, self._make_title_link(task, title, url))
         else:
