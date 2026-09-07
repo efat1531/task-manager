@@ -435,6 +435,16 @@ class TaskController:
         payload = {"date": iso_date, "tasks": self.tasks_for_day(iso_date)}
         return json.dumps(payload, indent=2, ensure_ascii=False)
 
+    # ---- reset -----------------------------------------------------------
+    def reset_database(self) -> None:
+        """Clear all persisted data: tasks, schedules, overrides, and PR links.
+
+        This is irreversible — the undo stack is discarded too, since the
+        actions it would replay no longer have anything to restore against.
+        """
+        self._repo.reset()
+        self._undo_stack.clear()
+
     # ---- undo ------------------------------------------------------------
     def can_undo(self) -> bool:
         return bool(self._undo_stack)

@@ -106,12 +106,33 @@ class MainWindow(QMainWindow):
         self._start_linear_poll_timer()
 
     def _build_menu(self) -> None:
-        """Menu bar: a Help menu hosting the update check and About box."""
+        """Menu bar: a Data menu for maintenance and a Help menu."""
+        data_menu = self.menuBar().addMenu("&Data")
+        reset_action = data_menu.addAction("Reset (clear all data)…")
+        reset_action.triggered.connect(self._on_reset_database)
+
         help_menu = self.menuBar().addMenu("&Help")
         check_action = help_menu.addAction("Check for updates…")
         check_action.triggered.connect(self._on_check_for_updates)
         about_action = help_menu.addAction("About Task Manager")
         about_action.triggered.connect(self._on_about)
+
+    def _on_reset_database(self) -> None:
+        """Wipe every task, schedule, and integration link after confirmation."""
+        confirm = QMessageBox(self)
+        confirm.setIcon(QMessageBox.Warning)
+        confirm.setWindowTitle("Reset all data?")
+        confirm.setText("This permanently deletes all tasks, schedules, and "
+                        "synced integration links.")
+        confirm.setInformativeText("This cannot be undone. Continue?")
+        confirm.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
+        confirm.setDefaultButton(QMessageBox.Cancel)
+        confirm.button(QMessageBox.Yes).setText("Reset everything")
+        if confirm.exec() != QMessageBox.Yes:
+            return
+        self._controller.reset_database()
+        self.refresh()
+        self._status.setText("All data cleared.")
 
     def _on_check_for_updates(self) -> None:
         self._updates.check_manual()
