@@ -9,6 +9,13 @@ from datetime import datetime
 from typing import Callable, List, Optional, Set, Tuple
 
 from models.integration import AzureConfig, PullRequest, pr_key, pr_to_task_fields
+from models.linear import (
+    LinearConfig,
+    LinearIssue,
+    filter_excluded,
+    issue_to_task_fields,
+    linear_key,
+)
 from models.schedule import Frequency, Occurrence, Schedule, occurs_on
 from models.task import Priority, Task
 from models.task_repository import TaskRepository
@@ -317,6 +324,79 @@ class TaskController:
         """Forget which PRs have been synced. Tasks already created are kept, but
         an open PR may produce a fresh task on a future sync."""
         self._repo.clear_pr_links()
+
+    # ---- Linear issue sync ----------------------------------------------
+    def sync_linear_issues(
+        self, issues: List[LinearIssue], config: LinearConfig
+    ) -> dict:
+        """Reconcile the fetched Linear issues against existing links.
+
+        The network fetch happens in the caller (a background worker); this
+        method is pure DB logic so the dedup + auto-complete behaviour stays
+        testable. ``issues`` is expected to already be limited to the synced
+        statuses by the query, and is further filtered here by the config's
+        excluded labels.
+
+        - An eligible issue with no existing link becomes a new task (and is
+          linked), at the priority mapped to its current status.
+        - An eligible issue that already has a link is skipped, but its task's
+          priority is refreshed to the current status's mapping so moving a
+          ticket between selected statuses re-prioritises it.
+        - A previously-linked issue that is *absent* from the eligible set
+          (moved to an unselected status, gained an excluded label, was
+          reassigned, or deleted) has its task completed.
+
+        Reconciliation is scoped to the ``"linear:"`` key prefix so it never
+        touches Azure PR links. The returned summary counts ``created`` /
+        ``skipped`` / ``completed``.
+        """
+        prefix = "linear:"
+        existing = {
+            key: task_id
+            for key, task_id in self._repo.list_pr_links().items()
+            if key.startswith(prefix)
+        }
+        synced_states = set(config.synced_state_ids())
+        eligible = [
+            issue
+            for issue in filter_excluded(issues, config.exclude_labels)
+            # Guard against the query returning a state the user has since
+            # de-selected (config is the source of truth).
+            if not synced_states or issue.state_id in synced_states
+        ]
+
+        current_keys = set()
+        created = skipped = completed = 0
+        for issue in eligible:
+            key = linear_key(issue.id)
+            current_keys.add(key)
+            priority = config.priority_for(issue.state_id)
+            if key in existing:
+                task = self._repo.get(existing[key])
+                if task is not None and task.priority != priority:
+                    task.priority = priority
+                    self._repo.update(task)
+                skipped += 1
+            else:
+                fields = issue_to_task_fields(issue, priority)
+                task = self.create_task(**fields)
+                self._repo.link_pr(key, task.id)
+                created += 1
+
+        # Auto-complete tasks for issues that are no longer eligible.
+        for key, task_id in existing.items():
+            if key in current_keys:
+                continue
+            task = self._repo.get(task_id)
+            if task is not None and not task.completed:
+                self._repo.set_completed(task_id, True)
+                completed += 1
+
+        return {"created": created, "skipped": skipped, "completed": completed}
+
+    def clear_linear_links(self) -> None:
+        """Forget which Linear issues have been synced (Azure links are kept)."""
+        self._repo.clear_pr_links(prefix="linear:")
 
     # ---- export ----------------------------------------------------------
     def tasks_for_day(self, iso_date: str) -> List[dict]:

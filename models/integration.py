@@ -125,8 +125,10 @@ def pr_to_task_fields(pr: PullRequest, config: "AzureConfig | None" = None) -> d
         lines.append(f"Repository: {repo}")
     if pr.author:
         lines.append(f"Author: {pr.author}")
+    # Surface the full PR link on its own labelled line so it is easy to
+    # copy-paste out of the task description.
     if pr.url:
-        lines.append(pr.url)
+        lines.append(f"Link: {pr.url}")
     return {
         "title": title,
         "description": "\n".join(lines),

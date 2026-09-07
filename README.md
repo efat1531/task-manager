@@ -2,7 +2,7 @@
 
 A cross-platform desktop task manager built with **PySide6 (Qt)** and **SQLite**,
 organized around a clean **MVC** architecture. Manage one-off tasks and recurring
-schedules, and auto-generate review tasks from your Azure DevOps pull requests.
+schedules, and auto-generate tasks from your Azure DevOps pull requests and Linear issues.
 
 [![Release](https://img.shields.io/github/v/release/efat1531/task-manager?sort=semver)](https://github.com/efat1531/task-manager/releases)
 [![Build](https://github.com/efat1531/task-manager/actions/workflows/release.yml/badge.svg)](https://github.com/efat1531/task-manager/actions/workflows/release.yml)
@@ -51,6 +51,25 @@ schedules, and auto-generate review tasks from your Azure DevOps pull requests.
 - Runs on demand via each **Sync now** button and on a **configurable background
   auto-poll**, all off the UI thread so the app never freezes.
 
+### Linear integration
+- A **Linear** tab connects to Linear using a **personal API key**, stored securely
+  in the **OS keyring** (never in the app database or settings file).
+- **Assigned to you**: issues assigned to the authenticated user, in the **team(s)**
+  you choose, become tasks. Load your teams, then load their **statuses & labels**.
+- **Pick which statuses create tasks**: every workflow state is listed with a
+  checkbox — tick the ones you want (e.g. *In Progress*, *In Review*).
+- **Per-status priority**: each ticked status has its own priority selector, so a
+  ticket's task priority follows its status. Moving a ticket between selected
+  statuses re-prioritises its task on the next sync.
+- **Exclude by label**: tick any labels whose issues should be left out — a ticket
+  carrying an excluded label never becomes a task (and an existing task is
+  auto-completed once the label is added).
+- **Exactly one task per issue** — never duplicated on re-sync. When an issue leaves
+  the selected statuses (e.g. moved to *Done*) or is reassigned, its task is
+  **auto-completed** on the next sync.
+- Runs on demand via **Sync now** and on a **configurable background auto-poll**,
+  off the UI thread so the app never freezes.
+
 ### Packaging & distribution
 - Builds to a **single-file Windows executable** with PyInstaller (windowed, app icon
   bundled).
@@ -65,7 +84,7 @@ schedules, and auto-generate review tasks from your Azure DevOps pull requests.
 | Storage      | SQLite (stdlib `sqlite3`)                                      |
 | Notifications| `plyer`                                                       |
 | Secrets      | `keyring` (OS credential store, e.g. Windows Credential Manager) |
-| Azure API    | stdlib `urllib` — no extra HTTP dependency                    |
+| Azure / Linear API | stdlib `urllib` (REST + GraphQL) — no extra HTTP dependency |
 | Packaging    | PyInstaller                                                   |
 | Tests        | `pytest` / `pytest-qt`                                         |
 
@@ -84,7 +103,8 @@ models/
   task.py                     # Task dataclass + Priority enum + overdue logic
   schedule.py                 # Schedule/Occurrence + recurrence logic (occurs_on)
   integration.py              # AzureConfig / PullRequest + PR→task mapping
-  task_repository.py          # SQLite CRUD for tasks, schedules, overrides, and PR links
+  linear.py                   # LinearConfig / LinearIssue + status-priority + issue→task mapping
+  task_repository.py          # SQLite CRUD for tasks, schedules, overrides, and external links
 controllers/
   task_controller.py          # mediates view ↔ repository (no Qt imports)
 views/
@@ -92,16 +112,20 @@ views/
   task_dialog.py              # add/edit dialog; one-off deadline or repeat schedule
   task_list.py                # drag-to-reorder QTableWidget subclass
   integration_tab.py          # Azure DevOps config + Sync (background worker)
+  linear_tab.py               # Linear config: teams, per-status priority, exclude labels + Sync
   theme.py                    # light/dark palettes + QSettings persistence
 services/
   notifier.py                 # plyer desktop-notification wrapper
   azure_client.py             # Azure DevOps REST client (stdlib urllib)
-  credentials.py              # PAT storage via OS keyring (with graceful fallback)
+  linear_client.py            # Linear GraphQL client (stdlib urllib)
+  credentials.py              # PAT / Linear key storage via OS keyring (with graceful fallback)
   integration_settings.py     # Azure config persistence (QSettings)
+  linear_settings.py          # Linear config persistence (QSettings)
 tests/
   test_task_logic.py          # task logic-layer tests (in-memory DB)
   test_schedule_logic.py      # recurrence + schedule persistence tests
   test_integration_logic.py   # PR dedup / auto-complete / parsing / source + priority tests
+  test_linear_logic.py        # Linear dedup / auto-complete / status-priority / exclusion / parsing tests
   test_export_logic.py        # per-day JSON export scoping + serialization tests
 assets/                       # app icons (png + multi-res ico)
 task_manager.spec             # PyInstaller build spec
@@ -149,6 +173,27 @@ When run from source, the database lives at `data\tasks.db` next to the project.
 The token is written only to your OS keyring. **Remove integration** deletes the
 token and all Azure settings and forgets which PRs were synced (existing tasks are
 kept).
+
+## Setting up the Linear integration
+
+1. In Linear, create a **personal API key** (Settings → Security & access → API).
+2. Open the **Linear** tab in the app, tick **Enable Linear integration**, paste the
+   **API key**, then **Save**. Click **Test connection** to verify.
+3. Click **Load teams**, then tick the **team(s)** whose issues you want.
+4. Click **Load statuses & labels for selected teams**.
+5. Under **Create tasks from these statuses**, tick each status that should become a
+   task (e.g. *In Progress*) and choose its **priority**.
+6. Under **Exclude issues with any of these labels**, tick any labels whose issues
+   should never appear.
+7. **Save**, then **Sync now** — or leave the background auto-poll to keep tasks
+   current.
+
+Only issues **assigned to you** are synced. Each issue becomes exactly one task at
+its status's priority; when an issue leaves the selected statuses, is reassigned, or
+gains an excluded label, its task is auto-completed on the next sync. The API key is
+written only to your OS keyring. **Remove integration** deletes the key and all
+Linear settings and forgets which issues were synced (existing tasks are kept; Azure
+links are untouched).
 
 ## Testing
 

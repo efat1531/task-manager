@@ -172,6 +172,14 @@ def test_authored_pr_mapping():
     assert "author" in fields["description"].lower()
 
 
+def test_pr_description_includes_labelled_link():
+    fields = pr_to_task_fields(
+        PullRequest(pr_id=7, title="Fix", url="https://dev.azure.com/o/_git/r/pr/7")
+    )
+    # The full PR link must be present, labelled, and copy-pasteable.
+    assert "Link: https://dev.azure.com/o/_git/r/pr/7" in fields["description"]
+
+
 def test_configurable_priorities():
     cfg = AzureConfig(
         priority_required=Priority.URGENT,
