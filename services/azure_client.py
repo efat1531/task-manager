@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -21,6 +22,16 @@ from models.integration import PullRequest
 
 _API_VERSION = "7.1"
 _TIMEOUT = 20  # seconds; keeps a hung network from blocking the worker forever
+
+# Rate-limit handling. Azure DevOps throttles per user (a global consumption
+# limit measured in TSTUs over a sliding 5-minute window) and answers with
+# HTTP 429 + a ``Retry-After`` header when a caller exceeds it. The app's poll
+# cadence stays far below that budget, but a shared PAT, multiple running
+# instances, or rapid manual syncs can still trip it, so ``_get`` retries a
+# 429 a bounded number of times, honouring ``Retry-After``.
+_MAX_ATTEMPTS = 3  # initial try + up to 2 retries on HTTP 429
+_DEFAULT_RETRY_WAIT = 5  # seconds, when Retry-After is absent or unparseable
+_MAX_RETRY_WAIT = 30  # seconds; clamp so the worker thread can't stall for long
 
 
 class AzureError(Exception):
@@ -38,28 +49,56 @@ class AzureDevOpsClient:
         token = base64.b64encode(f":{self._pat}".encode()).decode()
         return f"Basic {token}"
 
+    @staticmethod
+    def _retry_after_seconds(exc: urllib.error.HTTPError) -> int:
+        """Seconds to wait before retrying a 429, from the ``Retry-After`` header.
+
+        Azure DevOps sends integer seconds; the HTTP-date form is not parsed and
+        falls back to the default. Clamped to a small ceiling so a hostile or
+        misconfigured header can't park the worker thread for minutes.
+        """
+        raw = exc.headers.get("Retry-After") if exc.headers else None
+        try:
+            wait = int(str(raw).strip())
+        except (TypeError, ValueError):
+            wait = _DEFAULT_RETRY_WAIT
+        return max(1, min(wait, _MAX_RETRY_WAIT))
+
     def _get(self, url: str) -> dict:
         request = urllib.request.Request(url, method="GET")
         request.add_header("Authorization", self._auth_header())
         request.add_header("Accept", "application/json")
-        try:
-            with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
-                body = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:  # 401/403/404/...
-            detail = "authentication failed" if exc.code in (401, 203) else exc.reason
-            raise AzureError(f"Azure DevOps returned HTTP {exc.code}: {detail}") from exc
-        except urllib.error.URLError as exc:
-            raise AzureError(f"Could not reach Azure DevOps: {exc.reason}") from exc
-        except Exception as exc:  # pragma: no cover - defensive
-            raise AzureError(f"Unexpected error contacting Azure DevOps: {exc}") from exc
+        for attempt in range(_MAX_ATTEMPTS):
+            try:
+                with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
+                    body = response.read().decode("utf-8")
+            except urllib.error.HTTPError as exc:  # 401/403/404/429/...
+                if exc.code == 429:
+                    if attempt < _MAX_ATTEMPTS - 1:
+                        time.sleep(self._retry_after_seconds(exc))
+                        continue
+                    raise AzureError(
+                        "Azure DevOps is rate limiting requests (HTTP 429). "
+                        "Try again shortly or increase the poll interval."
+                    ) from exc
+                detail = "authentication failed" if exc.code in (401, 403) else exc.reason
+                raise AzureError(
+                    f"Azure DevOps returned HTTP {exc.code}: {detail}"
+                ) from exc
+            except urllib.error.URLError as exc:
+                raise AzureError(f"Could not reach Azure DevOps: {exc.reason}") from exc
+            except Exception as exc:  # pragma: no cover - defensive
+                raise AzureError(f"Unexpected error contacting Azure DevOps: {exc}") from exc
 
-        # Azure returns an HTML sign-in page (HTTP 200) when the PAT is invalid.
-        try:
-            return json.loads(body)
-        except json.JSONDecodeError as exc:
-            raise AzureError(
-                "Unexpected response from Azure DevOps (check the PAT and its scope)."
-            ) from exc
+            # Azure returns an HTML sign-in page (HTTP 200) when the PAT is invalid.
+            try:
+                return json.loads(body)
+            except json.JSONDecodeError as exc:
+                raise AzureError(
+                    "Unexpected response from Azure DevOps (check the PAT and its scope)."
+                ) from exc
+        # Unreachable: the loop either returns or raises on every path.
+        raise AzureError("Azure DevOps request failed after retries.")
 
     def _org_base(self) -> str:
         return f"https://dev.azure.com/{urllib.parse.quote(self._org)}"
