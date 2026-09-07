@@ -223,12 +223,21 @@ class TaskController:
             key = pr_key(organization, pr.pr_id, source)
             current_keys.add(key)
             if key in existing:
+                task_id = existing[key]
                 skipped += 1
-                continue
-            fields = pr_to_task_fields(pr, config)
-            task = self.create_task(**fields)
-            self._repo.link_pr(key, task.id)
-            created += 1
+            else:
+                fields = pr_to_task_fields(pr, config)
+                task = self.create_task(**fields)
+                self._repo.link_pr(key, task.id)
+                task_id = task.id
+                created += 1
+            # Refresh the unresolved-comment flag for authored PRs every sync so
+            # the task is pinned as Urgent while comments are open and drops back
+            # once they are resolved. (A no-op if the task was since deleted.)
+            if pr.is_author:
+                self._repo.set_unresolved_comments(
+                    task_id, pr.unresolved_comment_count
+                )
 
         # Auto-complete tasks for PRs of this source that are no longer open.
         for key, task_id in existing.items():

@@ -139,6 +139,39 @@ class AzureDevOpsClient:
         data = self._get(f"{self._prs_base()}/_apis/git/pullrequests?{query}")
         return self._parse_created_prs(data)
 
+    def active_comment_count(self, repository_id: str, pr_id: int) -> int:
+        """Number of unresolved (``active``) comment threads on a pull request.
+
+        Used to flag authored PRs that still need attention. Returns 0 when the
+        repository id is unknown (older links) rather than calling the API.
+        """
+        if not repository_id:
+            return 0
+        query = urllib.parse.urlencode({"api-version": _API_VERSION})
+        url = (
+            f"{self._prs_base()}/_apis/git/repositories/"
+            f"{urllib.parse.quote(str(repository_id))}/pullRequests/"
+            f"{pr_id}/threads?{query}"
+        )
+        return self.count_active_threads(self._get(url))
+
+    @staticmethod
+    def count_active_threads(payload: dict) -> int:
+        """Count unresolved comment threads in a PR ``threads`` response.
+
+        A thread counts when its ``status`` is ``"active"`` and it is not deleted.
+        System threads (reviewer/vote/status updates) carry no ``status`` and are
+        excluded, as are resolved threads (fixed/closed/wontFix/byDesign/pending).
+        Pure: no network, safe to unit-test.
+        """
+        count = 0
+        for thread in payload.get("value", []):
+            if thread.get("isDeleted"):
+                continue
+            if thread.get("status") == "active":
+                count += 1
+        return count
+
     def test_connection(self) -> tuple[bool, str]:
         """Return (ok, message). Never raises — safe to call from the UI."""
         if not self._org:
@@ -163,6 +196,7 @@ class AzureDevOpsClient:
             pr_id=item.get("pullRequestId"),
             title=item.get("title", ""),
             repository=repo.get("name", ""),
+            repository_id=repo.get("id", ""),
             project=project,
             author=created_by.get("displayName", ""),
             url=web,

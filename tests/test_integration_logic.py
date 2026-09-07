@@ -210,7 +210,8 @@ def test_parse_created_prs_marks_author():
                 "pullRequestId": 201,
                 "title": "Mine",
                 "status": "active",
-                "repository": {"name": "web", "project": {"name": "Store"}},
+                "repository": {"id": "repo-guid", "name": "web",
+                               "project": {"name": "Store"}},
                 "createdBy": {"displayName": "Me"},
             }
         ]
@@ -220,6 +221,63 @@ def test_parse_created_prs_marks_author():
     assert prs[0].pr_id == 201
     assert prs[0].is_author is True
     assert prs[0].is_required is False
+    assert prs[0].repository_id == "repo-guid"
+
+
+# ---- unresolved comment threads ------------------------------------------
+def test_count_active_threads_only_counts_unresolved_comment_threads():
+    payload = {
+        "value": [
+            {"id": 1, "status": "active"},                 # unresolved -> counts
+            {"id": 2, "status": "fixed"},                  # resolved
+            {"id": 3, "status": "closed"},                 # resolved
+            {"id": 4},                                     # system thread, no status
+            {"id": 5, "status": "active", "isDeleted": True},  # deleted, ignored
+            {"id": 6, "status": "active"},                 # unresolved -> counts
+        ]
+    }
+    assert AzureDevOpsClient.count_active_threads(payload) == 2
+
+
+def test_count_active_threads_empty():
+    assert AzureDevOpsClient.count_active_threads({}) == 0
+    assert AzureDevOpsClient.count_active_threads({"value": []}) == 0
+
+
+def test_active_comment_count_zero_without_repository_id():
+    # No repository id (older links) -> no API call, count is 0.
+    client = AzureDevOpsClient(ORG, pat="tok")
+    assert client.active_comment_count("", 5) == 0
+
+
+# ---- authored-PR unresolved-comment pinning ------------------------------
+def _author_pr(pr_id: int, unresolved: int = 0, title: str = "My PR") -> PullRequest:
+    return PullRequest(pr_id=pr_id, title=title, is_author=True,
+                       unresolved_comment_count=unresolved)
+
+
+def test_sync_sets_unresolved_flag_for_authored_pr(controller):
+    controller.sync_pull_requests(
+        [_author_pr(1, unresolved=3)], ORG, source="author"
+    )
+    task = controller.list_tasks()[0]
+    assert task.unresolved_comments == 3
+
+
+def test_resync_refreshes_flag_on_already_linked_pr(controller):
+    controller.sync_pull_requests([_author_pr(1, unresolved=3)], ORG, source="author")
+    # Comments get resolved; the PR is already linked (skipped) but the flag
+    # must still be refreshed to 0 so the task drops back down.
+    summary = controller.sync_pull_requests(
+        [_author_pr(1, unresolved=0)], ORG, source="author"
+    )
+    assert summary == {"created": 0, "skipped": 1, "completed": 0}
+    assert controller.list_tasks()[0].unresolved_comments == 0
+
+
+def test_review_pr_never_flagged(controller):
+    controller.sync_pull_requests([_pr(1)], ORG, source="review")
+    assert controller.list_tasks()[0].unresolved_comments == 0
 
 
 # ---- rate-limit handling (no live network) -------------------------------
