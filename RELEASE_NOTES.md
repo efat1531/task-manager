@@ -33,6 +33,10 @@ shows when the next Azure sync will run, and two reordering/PR bugs are fixed.
   "Review PR" task alongside your existing "Your PR" task. Pull requests you
   authored are now excluded from the review list, so only the "Your PR" task
   remains.
+- **Task titles no longer overlap in the list.** A row switching to a linked
+  title (e.g. a PR or Linear task whose text contains a URL) could paint the new
+  title on top of a stale one, so two titles appeared jumbled together. Each task
+  now renders cleanly on its own row.
 
 ## 🛠 Reliability
 
