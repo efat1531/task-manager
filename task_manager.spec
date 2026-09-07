@@ -10,9 +10,12 @@ hiddenimports = collect_submodules("keyring.backends") + [
 ]
 
 # Ship the icons alongside the code so the running app can load them.
+# RELEASE_NOTES.md is bundled at the root so the post-update "What's new" popup
+# can render the current version's changelog offline.
 datas = [
     ("assets/icon.png", "assets"),
     ("assets/icon.ico", "assets"),
+    ("RELEASE_NOTES.md", "."),
 ]
 
 a = Analysis(

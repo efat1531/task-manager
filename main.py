@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication
 
 from controllers.task_controller import TaskController
 from models.task_repository import TaskRepository
+from version import APP_VERSION
 from views.main_window import MainWindow
 
 
@@ -66,6 +67,7 @@ def main() -> int:
     _set_windows_app_id()
     app = QApplication(sys.argv)
     app.setApplicationName("Task Manager")
+    app.setApplicationVersion(APP_VERSION)
     if ICON_PATH.exists():
         app.setWindowIcon(QIcon(str(ICON_PATH)))
 
