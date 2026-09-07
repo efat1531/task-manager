@@ -377,6 +377,32 @@ def test_parse_prs_extracts_reviewer_vote():
     assert prs[1].review_completed is False
 
 
+def test_parse_prs_skips_own_authored_pr():
+    # Voting "waiting for author" (-5) on my own PR makes Azure list me as a
+    # reviewer of it. It must NOT become a "Review PR" task — an authored PR
+    # belongs to the "author" source only. Regression for the duplicate-task bug.
+    me = "guid-me"
+    payload = {
+        "value": [
+            {
+                "pullRequestId": 401,
+                "title": "My own PR I voted on",
+                "createdBy": {"id": me, "displayName": "Me"},
+                "reviewers": [{"id": me, "isRequired": True, "vote": -5}],
+            },
+            {
+                "pullRequestId": 402,
+                "title": "Someone else's PR",
+                "createdBy": {"id": "other", "displayName": "Bob"},
+                "reviewers": [{"id": me, "isRequired": True}],
+            },
+        ]
+    }
+    prs = AzureDevOpsClient._parse_prs(payload, me)
+    # Only the genuine review request survives; my own PR is skipped entirely.
+    assert [p.pr_id for p in prs] == [402]
+
+
 # ---- rate-limit handling (no live network) -------------------------------
 class _FakeResponse:
     """Minimal stand-in for urlopen's context-manager response."""

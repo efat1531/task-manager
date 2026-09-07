@@ -215,6 +215,12 @@ class AzureDevOpsClient:
         records which. Pure: no network, safe to unit-test."""
         result: List[PullRequest] = []
         for item in payload.get("value", []):
+            # A PR the user authored surfaces here once they cast any vote on it
+            # (Azure adds the author to the reviewers list). Skip it: an authored
+            # PR belongs to the "author" source ("Your PR #N"), so turning it into
+            # a "Review PR #N" task would spuriously duplicate it.
+            if (item.get("createdBy") or {}).get("id") == reviewer_id:
+                continue
             matched = None
             for reviewer in item.get("reviewers", []):
                 if reviewer.get("id") == reviewer_id:

@@ -118,3 +118,21 @@ def test_reorder_multi_select_block_moves_together():
     row_ids = [10, 20, 30, 40]
     # Move rows 0 and 1 to just before row 3.
     assert TaskTable._reordered_ids(row_ids, {0, 1}, drop_row=3) == [30, 10, 20, 40]
+
+
+# ---- Bug: drag from bottom to top mis-read as "drop at bottom" ------------
+def test_drop_index_above_first_row_is_top():
+    # Cursor is above row 0's top edge (first_row_top=10) — a drag to the very
+    # top must resolve to index 0, not rowCount(). This was the no-op bug that
+    # forced moving a row up one position at a time.
+    assert TaskTable._drop_index_for_invalid(pos_y=2, row_count=5, first_row_top=10) == 0
+
+
+def test_drop_index_below_last_row_is_bottom():
+    # Cursor below the content (at/after the first row's top) resolves to the
+    # bottom — preserving the existing downward-drag behavior.
+    assert TaskTable._drop_index_for_invalid(pos_y=400, row_count=5, first_row_top=10) == 5
+
+
+def test_drop_index_empty_table_is_top():
+    assert TaskTable._drop_index_for_invalid(pos_y=400, row_count=0, first_row_top=0) == 0
