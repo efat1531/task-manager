@@ -23,6 +23,48 @@ class TaskController:
     def list_tasks(self, order_by: str = "sort_order") -> List[Task]:
         return self._repo.list(order_by=order_by)
 
+    @staticmethod
+    def order_rows(tasks: List[Task], occurrences: List[Occurrence], order_by: str):
+        """Merge one-off tasks and recurring occurrences into a single ordering.
+
+        Under manual ordering (``sort_order``) occurrences have no place in the
+        drag-reorderable sequence, so they simply follow the tasks (in the order
+        the caller supplied). For every other sort the two kinds are interleaved
+        by the chosen key so, e.g., a Medium occurrence sits above a Low task
+        instead of being stranded at the bottom. Tasks with unresolved PR
+        comments stay pinned to the very top, matching the repository's sort.
+        """
+        rows = list(tasks) + list(occurrences)
+        if order_by == "sort_order":
+            return rows
+
+        def pinned(item) -> int:
+            # 0 sorts before 1, so pinned (unresolved) rows come first.
+            return 0 if (getattr(item, "unresolved_comments", 0) or 0) > 0 else 1
+
+        def priority_key(item) -> int:
+            return -int(item.priority)  # higher priority first
+
+        def optional_asc(value):
+            # Missing/empty values sort last, present ones ascending.
+            return (1, "") if not value else (0, value)
+
+        def title_key(item) -> str:
+            return item.title.lower()
+
+        if order_by == "priority":
+            key = lambda i: (pinned(i), priority_key(i),
+                             optional_asc(getattr(i, "deadline", None)), title_key(i))
+        elif order_by == "deadline":
+            key = lambda i: (pinned(i), optional_asc(getattr(i, "deadline", None)),
+                             priority_key(i), title_key(i))
+        elif order_by == "created_at":
+            key = lambda i: (pinned(i), optional_asc(getattr(i, "created_at", None)),
+                             title_key(i))
+        else:
+            return rows
+        return sorted(rows, key=key)
+
     def search_tasks(self, query: str, order_by: str = "sort_order") -> List[Task]:
         """Case-insensitive substring match over title and description."""
         query = query.strip().lower()

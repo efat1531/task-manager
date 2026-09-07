@@ -206,8 +206,10 @@ class MainWindow(QMainWindow):
             self._controller.occurrences_on(self._selected_date()),
             key=lambda o: (-int(o.priority), o.title.lower()),
         )
-        # One-off tasks are always shown; occurrences follow, grouped after them.
-        all_rows = list(tasks) + occurrences
+        # Merge tasks and occurrences. Under manual order the occurrences follow
+        # the tasks; under every other sort they are interleaved by the sort key
+        # so priority/deadline ordering applies to the whole list, not just tasks.
+        all_rows = self._controller.order_rows(list(tasks), occurrences, order_by)
 
         self._sync_category_filter(all_rows)
 
