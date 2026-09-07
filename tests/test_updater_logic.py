@@ -110,6 +110,28 @@ def test_parse_release_none_without_exe_asset():
     assert parse_release(payload, "1.2.0") is None
 
 
+# ---- self-replace helper script ----------------------------------------------
+def test_write_helper_bat_swaps_by_rename(tmp_path):
+    # The helper must rename the running exe aside and move the new one into its
+    # place (overwriting a running one-file exe fails and left users on the old
+    # version), and only relaunch the exe at its original path.
+    new_exe = tmp_path / "TaskManager-new.exe"
+    target = tmp_path / "TaskManager.exe"
+    bat = updater._write_helper_bat(tmp_path, new_exe, target, 4242)
+    assert bat.exists()
+    script = bat.read_text(encoding="utf-8")
+
+    # Rename current exe aside, then place the new exe at the original path.
+    assert f'move /Y "{target}" "{target}.old"' in script
+    assert f'move /Y "{new_exe}" "{target}"' in script
+    # Relaunch happens on the original path (the freshly-swapped-in exe).
+    assert f'start "" "{target}"' in script
+    # Still waits for the running process to exit first.
+    assert "4242" in script
+    # Guard against a regression to the old blind overwrite-then-launch.
+    assert f'move /Y "{new_exe}" "{target}" >nul\nstart' not in script
+
+
 # ---- check_for_update_strict (monkeypatched network) --------------------------
 class _FakeResponse:
     def __init__(self, payload: dict) -> None:

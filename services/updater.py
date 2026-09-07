@@ -7,8 +7,11 @@ unit-tested with fixture payloads and no live connection.
 
 The actual install is Windows/frozen only: a running one-file PyInstaller exe
 cannot overwrite itself, so :func:`download_and_apply` downloads the new exe to a
-temp folder, then hands off to a small ``update.bat`` that waits for this process
-to exit, swaps the exe in place, and relaunches it.
+temp folder, then hands off to a small ``update.bat``. The helper waits for this
+process to exit, then swaps by **renaming** the current exe aside and moving the
+new one into its place (Windows allows renaming a running exe even when it refuses
+to overwrite it — the one-file bootloader keeps the file briefly locked), and only
+relaunches once the new exe is actually in place.
 """
 from __future__ import annotations
 
@@ -201,21 +204,54 @@ def _write_helper_bat(directory: Path, new_exe: Path, target_exe: Path,
                       pid: int) -> Path:
     """Write the batch script that swaps the exe once this process exits.
 
-    It waits for our PID to disappear, replaces the old exe, relaunches it, and
-    finally deletes itself. ``%~f0`` is the script's own path.
+    It waits for our PID to disappear, then swaps by **renaming** the current exe
+    aside (``.old``) and moving the new exe into its place — a running one-file exe
+    can be renamed even while the bootloader still holds it locked, whereas
+    overwriting it in place fails. Only after a successful swap does it relaunch the
+    new exe; if the swap can't happen it restores/keeps the original and relaunches
+    that, so the user is never left without a working app. ``%~f0`` is the script's
+    own path.
     """
     bat = directory / "update.bat"
+    old_exe = f"{target_exe}.old"
     script = f"""@echo off
-setlocal
-rem Wait for the running app (PID {pid}) to exit so the exe is unlocked.
+setlocal enableextensions enabledelayedexpansion
+rem Wait for the running app (PID {pid}) to exit before touching the exe.
 :waitloop
 tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul
 if not errorlevel 1 (
     ping -n 2 127.0.0.1 >nul
     goto waitloop
 )
-move /Y "{new_exe}" "{target_exe}" >nul
+rem Rename the current exe aside. The one-file bootloader may hold it locked for a
+rem moment after the child exits, so retry a bounded number of times.
+set /a tries=0
+:renameloop
+move /Y "{target_exe}" "{old_exe}" >nul 2>&1
+if not errorlevel 1 goto place
+set /a tries+=1
+if !tries! GEQ 15 goto fallback
+ping -n 2 127.0.0.1 >nul
+goto renameloop
+:place
+rem Put the new exe where the old one was. If that fails, restore the original.
+move /Y "{new_exe}" "{target_exe}" >nul 2>&1
+if errorlevel 1 goto restore
 start "" "{target_exe}"
+rem Best-effort cleanup of the renamed-aside exe once its process releases it.
+set /a dtries=0
+:delold
+del "{old_exe}" >nul 2>&1
+if not exist "{old_exe}" goto done
+set /a dtries+=1
+if !dtries! GEQ 10 goto done
+ping -n 2 127.0.0.1 >nul
+goto delold
+:restore
+move /Y "{old_exe}" "{target_exe}" >nul 2>&1
+:fallback
+start "" "{target_exe}"
+:done
 del "%~f0"
 """
     bat.write_text(script, encoding="utf-8")
