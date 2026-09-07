@@ -53,12 +53,12 @@ jobs:
         run: choco install innosetup -y --no-progress
 
       - name: Build installer
-        shell: bash
+        shell: pwsh
         run: |
-          app_version="$(python -c 'from version import APP_VERSION; print(APP_VERSION)')"
+          # PowerShell (not bash) so MSYS path-conversion doesn't mangle the /D switch.
+          $appVersion = python -c "from version import APP_VERSION; print(APP_VERSION)"
           # choco's innosetup package installs here but doesn't shim ISCC onto PATH.
-          iscc="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
-          "$iscc" "/DAppVersion=${app_version}" installer/task_manager.iss
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$appVersion" "installer\task_manager.iss"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
