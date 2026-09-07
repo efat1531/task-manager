@@ -8,6 +8,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import urllib.error  # noqa: E402
+
 from controllers.task_controller import TaskController  # noqa: E402
 from models.integration import (  # noqa: E402
     AzureConfig,
@@ -17,7 +19,8 @@ from models.integration import (  # noqa: E402
 )
 from models.task import Priority  # noqa: E402
 from models.task_repository import TaskRepository  # noqa: E402
-from services.azure_client import AzureDevOpsClient  # noqa: E402
+from services import azure_client  # noqa: E402
+from services.azure_client import AzureDevOpsClient, AzureError  # noqa: E402
 
 ORG = "myorg"
 
@@ -217,3 +220,87 @@ def test_parse_created_prs_marks_author():
     assert prs[0].pr_id == 201
     assert prs[0].is_author is True
     assert prs[0].is_required is False
+
+
+# ---- rate-limit handling (no live network) -------------------------------
+class _FakeResponse:
+    """Minimal stand-in for urlopen's context-manager response."""
+
+    def __init__(self, body: str) -> None:
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._body.encode("utf-8")
+
+
+def _http_error(code: int, retry_after: str | None = None) -> urllib.error.HTTPError:
+    headers = {"Retry-After": retry_after} if retry_after is not None else {}
+    return urllib.error.HTTPError(
+        "https://dev.azure.com/o/_apis/connectionData",
+        code,
+        "boom",
+        headers,
+        None,
+    )
+
+
+def test_get_retries_on_429_then_succeeds(monkeypatch):
+    calls = {"n": 0}
+    sleeps: list[int] = []
+
+    def fake_urlopen(request, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _http_error(429, retry_after="1")
+        return _FakeResponse('{"ok": true}')
+
+    monkeypatch.setattr(azure_client.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(azure_client.time, "sleep", lambda s: sleeps.append(s))
+
+    client = AzureDevOpsClient(ORG, pat="tok")
+    assert client._get("https://dev.azure.com/o/_apis/connectionData") == {"ok": True}
+    assert calls["n"] == 2  # one retry
+    assert sleeps == [1]  # honoured the Retry-After header
+
+
+def test_get_raises_after_exhausting_retries(monkeypatch):
+    calls = {"n": 0}
+
+    def always_429(request, timeout=None):
+        calls["n"] += 1
+        raise _http_error(429, retry_after="1")
+
+    monkeypatch.setattr(azure_client.urllib.request, "urlopen", always_429)
+    monkeypatch.setattr(azure_client.time, "sleep", lambda s: None)
+
+    client = AzureDevOpsClient(ORG, pat="tok")
+    with pytest.raises(AzureError, match="rate limiting"):
+        client._get("https://dev.azure.com/o/_apis/connectionData")
+    assert calls["n"] == azure_client._MAX_ATTEMPTS  # no more than the cap
+
+
+def test_retry_after_falls_back_when_header_missing():
+    assert AzureDevOpsClient._retry_after_seconds(_http_error(429)) == \
+        azure_client._DEFAULT_RETRY_WAIT
+
+
+def test_retry_after_is_clamped_to_ceiling():
+    huge = AzureDevOpsClient._retry_after_seconds(_http_error(429, retry_after="99999"))
+    assert huge == azure_client._MAX_RETRY_WAIT
+
+
+def test_get_reports_403_as_authentication_failure(monkeypatch):
+    def forbidden(request, timeout=None):
+        raise _http_error(403)
+
+    monkeypatch.setattr(azure_client.urllib.request, "urlopen", forbidden)
+
+    client = AzureDevOpsClient(ORG, pat="tok")
+    with pytest.raises(AzureError, match="authentication failed"):
+        client._get("https://dev.azure.com/o/_apis/connectionData")
