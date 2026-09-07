@@ -370,5 +370,25 @@ class TaskRepository:
             self._conn.execute("DELETE FROM pr_links")
         self._conn.commit()
 
+    # ---- reset -----------------------------------------------------------
+    def reset(self) -> None:
+        """Delete every row from every table, emptying the database.
+
+        Clears tasks, schedules, their per-day overrides, and all external
+        (Azure/Linear) PR links, then resets the AUTOINCREMENT counters so ids
+        start over from 1. The schema itself is left in place.
+        """
+        with self._conn:  # commits on success, rolls back on error
+            self._conn.execute("DELETE FROM schedule_overrides")
+            self._conn.execute("DELETE FROM pr_links")
+            self._conn.execute("DELETE FROM schedules")
+            self._conn.execute("DELETE FROM tasks")
+            # sqlite_sequence only exists once an AUTOINCREMENT table has grown;
+            # ignore its absence on a brand-new database.
+            try:
+                self._conn.execute("DELETE FROM sqlite_sequence")
+            except sqlite3.OperationalError:
+                pass
+
     def close(self) -> None:
         self._conn.close()

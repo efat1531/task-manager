@@ -63,8 +63,8 @@ def _plain(tid=1):
 
 def _linked(tid=2):
     return Task(
-        title="Your PR #59978: linked task",
-        description="Link: https://dev.azure.com/o/_git/repo/pullrequest/59978",
+        title="Your PR #123: linked task",
+        description="Link: https://dev.azure.com/o/_git/repo/pullrequest/123",
         priority=Priority.HIGH,
         id=tid,
     )

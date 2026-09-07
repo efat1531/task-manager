@@ -105,18 +105,22 @@ def pr_to_task_fields(pr: PullRequest, config: "AzureConfig | None" = None) -> d
     """
     if config is None:
         config = AzureConfig()
+    # Name the repository in the title (e.g. "Your Contoso PR #123: …")
+    # so PRs from different repos are distinguishable at a glance; omitted when
+    # the repository is unknown.
+    repo_part = f"{pr.repository} " if pr.repository else ""
     if pr.is_author:
         role = "author"
         priority = config.priority_author
-        title = f"Your PR #{pr.pr_id}: {pr.title}"
+        title = f"Your {repo_part}PR #{pr.pr_id}: {pr.title}"
     elif pr.is_required:
         role = "required"
         priority = config.priority_required
-        title = f"Review PR #{pr.pr_id}: {pr.title}"
+        title = f"Review {repo_part}PR #{pr.pr_id}: {pr.title}"
     else:
         role = "optional"
         priority = config.priority_optional
-        title = f"Review PR #{pr.pr_id}: {pr.title}"
+        title = f"Review {repo_part}PR #{pr.pr_id}: {pr.title}"
 
     role_line = "You are the author" if pr.is_author else f"Your review: {role}"
     lines = [f"Pull request #{pr.pr_id}", role_line]

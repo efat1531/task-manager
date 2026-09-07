@@ -63,6 +63,28 @@ def test_delete_task(controller):
     assert controller.list_tasks() == []
 
 
+def test_reset_database_clears_everything(controller):
+    controller.create_task("Task A")
+    controller.create_task("Task B")
+    controller.create_schedule("Standup", "2026-01-01", "2026-12-31")
+    controller.delete_task(controller.list_tasks()[0].id)  # leave something to undo
+    assert controller.can_undo() is True
+
+    controller.reset_database()
+
+    assert controller.list_tasks() == []
+    assert controller.list_schedules() == []
+    assert controller.can_undo() is False
+
+
+def test_reset_database_resets_ids(controller):
+    controller.create_task("First")
+    controller.reset_database()
+    fresh = controller.create_task("After reset")
+    # AUTOINCREMENT counter is reset, so ids start over from 1.
+    assert fresh.id == 1
+
+
 def test_reorder_persists_new_manual_order(controller):
     a = controller.create_task("a")
     b = controller.create_task("b")

@@ -8,6 +8,7 @@ import json
 from datetime import datetime
 from typing import Callable, List, Optional, Set, Tuple
 
+from models import linkify
 from models.integration import AzureConfig, PullRequest, pr_key, pr_to_task_fields
 from models.linear import (
     LinearConfig,
@@ -277,6 +278,7 @@ class TaskController:
             current_keys.add(key)
             if key in existing:
                 task_id = existing[key]
+                self._backfill_pr_url(task_id, pr)
                 skipped += 1
             else:
                 fields = pr_to_task_fields(pr, config)
@@ -319,6 +321,27 @@ class TaskController:
             "completed": completed,
             "reopened": reopened,
         }
+
+    def _backfill_pr_url(self, task_id: int, pr: PullRequest) -> None:
+        """Give an already-linked PR task its clickable link.
+
+        Tasks created before the PR's web URL could be reconstructed have no
+        link in their description, so their row shows no ``↗`` button (unlike
+        the Linear rows). When the freshly-fetched PR now carries a URL and the
+        task still has none, append a ``Link:`` line so the row gains the same
+        button. Only ever *adds* a link when the task has none — a description
+        the user edited to already contain one is left untouched.
+        """
+        if not pr.url:
+            return
+        task = self._repo.get(task_id)
+        if task is None or linkify.first_url(task.title, task.description):
+            return
+        link_line = f"Link: {pr.url}"
+        task.description = (
+            f"{task.description}\n{link_line}" if task.description else link_line
+        )
+        self._repo.update(task)
 
     def clear_pr_links(self) -> None:
         """Forget which PRs have been synced. Tasks already created are kept, but
@@ -434,6 +457,16 @@ class TaskController:
         """Pretty-printed JSON of :meth:`tasks_for_day`, ready for the clipboard."""
         payload = {"date": iso_date, "tasks": self.tasks_for_day(iso_date)}
         return json.dumps(payload, indent=2, ensure_ascii=False)
+
+    # ---- reset -----------------------------------------------------------
+    def reset_database(self) -> None:
+        """Clear all persisted data: tasks, schedules, overrides, and PR links.
+
+        This is irreversible — the undo stack is discarded too, since the
+        actions it would replay no longer have anything to restore against.
+        """
+        self._repo.reset()
+        self._undo_stack.clear()
 
     # ---- undo ------------------------------------------------------------
     def can_undo(self) -> bool:

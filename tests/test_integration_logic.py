@@ -69,8 +69,8 @@ def test_absent_pr_autocompletes_its_task(controller):
     summary = controller.sync_pull_requests([_pr(2)], ORG)
     assert summary["completed"] == 1
     by_title = {t.title: t for t in controller.list_tasks()}
-    assert by_title["Review PR #1: Feature"].completed is True
-    assert by_title["Review PR #2: Feature"].completed is False
+    assert by_title["Review repo PR #1: Feature"].completed is True
+    assert by_title["Review repo PR #2: Feature"].completed is False
 
 
 def test_autocomplete_is_idempotent(controller):
@@ -87,6 +87,31 @@ def test_clear_pr_links_forgets_synced_prs(controller):
     summary = controller.sync_pull_requests([_pr(1)], ORG)
     assert summary["created"] == 1
     assert summary["skipped"] == 0
+
+
+# ---- link backfill on already-synced tasks -------------------------------
+def _pr_with_url(pr_id: int, url: str) -> PullRequest:
+    return PullRequest(pr_id=pr_id, title="Feature", repository="repo",
+                       project="proj", author="Alice", is_required=True, url=url)
+
+
+def test_resync_backfills_missing_pr_link(controller):
+    # First sync: the PR carried no web URL, so the task has no clickable link.
+    controller.sync_pull_requests([_pr(1)], ORG)
+    assert "Link:" not in controller.list_tasks()[0].description
+
+    # A later sync returns the same PR, now with a URL (the reconstruction fix).
+    url = "https://dev.azure.com/myorg/proj/_git/repo/pullrequest/1"
+    summary = controller.sync_pull_requests([_pr_with_url(1, url)], ORG)
+    assert summary["skipped"] == 1
+    assert f"Link: {url}" in controller.list_tasks()[0].description
+
+
+def test_backfill_does_not_duplicate_or_overwrite_existing_link(controller):
+    url = "https://dev.azure.com/myorg/proj/_git/repo/pullrequest/1"
+    controller.sync_pull_requests([_pr_with_url(1, url)], ORG)
+    controller.sync_pull_requests([_pr_with_url(1, url)], ORG)  # re-sync
+    assert controller.list_tasks()[0].description.count("Link:") == 1
 
 
 # ---- link persistence + mapping -----------------------------------------
@@ -110,10 +135,20 @@ def test_pr_key_namespaces_by_source():
 
 def test_pr_to_task_fields_mapping():
     fields = pr_to_task_fields(_pr(9, "Fix bug"))
-    assert fields["title"] == "Review PR #9: Fix bug"
+    assert fields["title"] == "Review repo PR #9: Fix bug"
     assert fields["priority"] is Priority.HIGH
     assert fields["category"] == "Azure PR"
     assert fields["deadline"] is None
+
+
+def test_title_includes_repository_name():
+    authored = PullRequest(pr_id=123, title="This is a test PR",
+                           repository="Contoso", is_author=True)
+    assert (pr_to_task_fields(authored)["title"]
+            == "Your Contoso PR #123: This is a test PR")
+    # Repository unknown: the title falls back to the plain form (no stray space).
+    no_repo = PullRequest(pr_id=7, title="Fix", is_author=True)
+    assert pr_to_task_fields(no_repo)["title"] == "Your PR #7: Fix"
 
 
 # ---- pure JSON parsing (no HTTP) -----------------------------------------
@@ -153,6 +188,67 @@ def test_parse_prs_includes_required_and_optional_reviewer():
     assert required.author == "Bob"
     assert required.url.endswith("/pr/101")
     assert optional.is_required is False
+
+
+def test_parse_prs_builds_web_url_when_links_missing():
+    """The PR list endpoint often omits ``_links.web``; the URL is then
+    reconstructed from org/project/repo/id so the task gets a real link."""
+    me = "guid-me"
+    payload = {
+        "value": [
+            {
+                "pullRequestId": 456,
+                "title": "Add a column",
+                "status": "active",
+                "repository": {"name": "Contoso", "project": {"name": "Fabrikam"}},
+                "reviewers": [{"id": me, "isRequired": True}],
+            }
+        ]
+    }
+    org_base = "https://dev.azure.com/myorg"
+    prs = AzureDevOpsClient._parse_prs(payload, me, org_base=org_base)
+    assert prs[0].url == (
+        "https://dev.azure.com/myorg/Fabrikam/_git/Contoso/pullrequest/456"
+    )
+
+
+def test_parse_created_prs_builds_web_url_when_links_missing():
+    payload = {
+        "value": [
+            {
+                "pullRequestId": 42,
+                "title": "My PR",
+                "status": "active",
+                "repository": {"name": "Repo A", "project": {"name": "Proj X"}},
+            }
+        ]
+    }
+    org_base = "https://dev.azure.com/myorg"
+    prs = AzureDevOpsClient._parse_created_prs(payload, org_base=org_base)
+    # Project and repo names with spaces are URL-encoded in the web path.
+    assert prs[0].url == (
+        "https://dev.azure.com/myorg/Proj%20X/_git/Repo%20A/pullrequest/42"
+    )
+    # And the mapped description carries a clickable Link line.
+    assert "Link: https://dev.azure.com/myorg/Proj%20X" in pr_to_task_fields(prs[0])["description"]
+
+
+def test_parse_prs_prefers_api_web_link_over_reconstruction():
+    """When the API does supply ``_links.web.href`` it wins over the fallback."""
+    me = "guid-me"
+    payload = {
+        "value": [
+            {
+                "pullRequestId": 7,
+                "title": "Has link",
+                "repository": {"name": "web", "project": {"name": "Store"}},
+                "_links": {"web": {"href": "https://example/pr/7"}},
+                "reviewers": [{"id": me, "isRequired": True}],
+            }
+        ]
+    }
+    prs = AzureDevOpsClient._parse_prs(payload, me, org_base="https://dev.azure.com/myorg")
+    assert prs[0].url == "https://example/pr/7"
 
 
 def test_optional_reviewer_task_is_medium_priority():

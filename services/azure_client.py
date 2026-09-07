@@ -127,7 +127,7 @@ class AzureDevOpsClient:
             "api-version": _API_VERSION,
         })
         data = self._get(f"{self._prs_base()}/_apis/git/pullrequests?{query}")
-        return self._parse_prs(data, reviewer_id)
+        return self._parse_prs(data, reviewer_id, org_base=self._org_base())
 
     def list_created_prs(self, creator_id: str) -> List[PullRequest]:
         """Active PRs authored by ``creator_id`` (the token owner's GUID)."""
@@ -137,7 +137,7 @@ class AzureDevOpsClient:
             "api-version": _API_VERSION,
         })
         data = self._get(f"{self._prs_base()}/_apis/git/pullrequests?{query}")
-        return self._parse_created_prs(data)
+        return self._parse_created_prs(data, org_base=self._org_base())
 
     def active_comment_count(self, repository_id: str, pr_id: int) -> int:
         """Number of unresolved (``active``) comment threads on a pull request.
@@ -187,17 +187,32 @@ class AzureDevOpsClient:
     # ---- parsing (pure) --------------------------------------------------
     @staticmethod
     def _build_pr(
-        item: dict, *, is_required: bool, is_author: bool, reviewer_vote: int = 0
+        item: dict, *, is_required: bool, is_author: bool,
+        reviewer_vote: int = 0, org_base: str = "",
     ) -> PullRequest:
-        """Project one raw Azure PR item onto a :class:`PullRequest`."""
+        """Project one raw Azure PR item onto a :class:`PullRequest`.
+
+        ``org_base`` (``https://dev.azure.com/{org}``) lets us reconstruct the
+        PR's web URL when the API omits it — see below.
+        """
         repo = item.get("repository") or {}
         project = (repo.get("project") or {}).get("name", "")
+        repo_name = repo.get("name", "")
         created_by = item.get("createdBy") or {}
+        pr_id = item.get("pullRequestId")
         web = ((item.get("_links") or {}).get("web") or {}).get("href", "")
+        # The PR *list* endpoint frequently omits ``_links.web``, leaving the task
+        # description without a link. Fall back to the canonical web URL, which is
+        # deterministic from org/project/repo/id.
+        if not web and org_base and project and repo_name and pr_id is not None:
+            web = (
+                f"{org_base}/{urllib.parse.quote(project)}"
+                f"/_git/{urllib.parse.quote(repo_name)}/pullrequest/{pr_id}"
+            )
         return PullRequest(
-            pr_id=item.get("pullRequestId"),
+            pr_id=pr_id,
             title=item.get("title", ""),
-            repository=repo.get("name", ""),
+            repository=repo_name,
             repository_id=repo.get("id", ""),
             project=project,
             author=created_by.get("displayName", ""),
@@ -209,7 +224,9 @@ class AzureDevOpsClient:
         )
 
     @classmethod
-    def _parse_prs(cls, payload: dict, reviewer_id: str) -> List[PullRequest]:
+    def _parse_prs(
+        cls, payload: dict, reviewer_id: str, org_base: str = ""
+    ) -> List[PullRequest]:
         """Build PullRequests for every PR where the given reviewer is listed —
         whether they are a required or an optional reviewer. ``is_required``
         records which. Pure: no network, safe to unit-test."""
@@ -234,15 +251,18 @@ class AzureDevOpsClient:
                     is_required=bool(matched.get("isRequired")),
                     is_author=False,
                     reviewer_vote=int(matched.get("vote", 0) or 0),
+                    org_base=org_base,
                 )
             )
         return result
 
     @classmethod
-    def _parse_created_prs(cls, payload: dict) -> List[PullRequest]:
+    def _parse_created_prs(
+        cls, payload: dict, org_base: str = ""
+    ) -> List[PullRequest]:
         """Build PullRequests for every authored PR in the payload (``is_author``
         set). Pure: no network, safe to unit-test."""
         return [
-            cls._build_pr(item, is_required=False, is_author=True)
+            cls._build_pr(item, is_required=False, is_author=True, org_base=org_base)
             for item in payload.get("value", [])
         ]
