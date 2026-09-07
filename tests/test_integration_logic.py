@@ -155,6 +155,67 @@ def test_parse_prs_includes_required_and_optional_reviewer():
     assert optional.is_required is False
 
 
+def test_parse_prs_builds_web_url_when_links_missing():
+    """The PR list endpoint often omits ``_links.web``; the URL is then
+    reconstructed from org/project/repo/id so the task gets a real link."""
+    me = "guid-me"
+    payload = {
+        "value": [
+            {
+                "pullRequestId": 59855,
+                "title": "Add Surf column",
+                "status": "active",
+                "repository": {"name": "DenticonCore", "project": {"name": "PoWProjects"}},
+                "reviewers": [{"id": me, "isRequired": True}],
+            }
+        ]
+    }
+    org_base = "https://dev.azure.com/myorg"
+    prs = AzureDevOpsClient._parse_prs(payload, me, org_base=org_base)
+    assert prs[0].url == (
+        "https://dev.azure.com/myorg/PoWProjects/_git/DenticonCore/pullrequest/59855"
+    )
+
+
+def test_parse_created_prs_builds_web_url_when_links_missing():
+    payload = {
+        "value": [
+            {
+                "pullRequestId": 42,
+                "title": "My PR",
+                "status": "active",
+                "repository": {"name": "Repo A", "project": {"name": "Proj X"}},
+            }
+        ]
+    }
+    org_base = "https://dev.azure.com/myorg"
+    prs = AzureDevOpsClient._parse_created_prs(payload, org_base=org_base)
+    # Project and repo names with spaces are URL-encoded in the web path.
+    assert prs[0].url == (
+        "https://dev.azure.com/myorg/Proj%20X/_git/Repo%20A/pullrequest/42"
+    )
+    # And the mapped description carries a clickable Link line.
+    assert "Link: https://dev.azure.com/myorg/Proj%20X" in pr_to_task_fields(prs[0])["description"]
+
+
+def test_parse_prs_prefers_api_web_link_over_reconstruction():
+    """When the API does supply ``_links.web.href`` it wins over the fallback."""
+    me = "guid-me"
+    payload = {
+        "value": [
+            {
+                "pullRequestId": 7,
+                "title": "Has link",
+                "repository": {"name": "web", "project": {"name": "Store"}},
+                "_links": {"web": {"href": "https://example/pr/7"}},
+                "reviewers": [{"id": me, "isRequired": True}],
+            }
+        ]
+    }
+    prs = AzureDevOpsClient._parse_prs(payload, me, org_base="https://dev.azure.com/myorg")
+    assert prs[0].url == "https://example/pr/7"
+
+
 def test_optional_reviewer_task_is_medium_priority():
     fields = pr_to_task_fields(
         PullRequest(pr_id=5, title="Docs", repository="r", is_required=False)
