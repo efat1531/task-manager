@@ -89,6 +89,31 @@ def test_clear_pr_links_forgets_synced_prs(controller):
     assert summary["skipped"] == 0
 
 
+# ---- link backfill on already-synced tasks -------------------------------
+def _pr_with_url(pr_id: int, url: str) -> PullRequest:
+    return PullRequest(pr_id=pr_id, title="Feature", repository="repo",
+                       project="proj", author="Alice", is_required=True, url=url)
+
+
+def test_resync_backfills_missing_pr_link(controller):
+    # First sync: the PR carried no web URL, so the task has no clickable link.
+    controller.sync_pull_requests([_pr(1)], ORG)
+    assert "Link:" not in controller.list_tasks()[0].description
+
+    # A later sync returns the same PR, now with a URL (the reconstruction fix).
+    url = "https://dev.azure.com/myorg/proj/_git/repo/pullrequest/1"
+    summary = controller.sync_pull_requests([_pr_with_url(1, url)], ORG)
+    assert summary["skipped"] == 1
+    assert f"Link: {url}" in controller.list_tasks()[0].description
+
+
+def test_backfill_does_not_duplicate_or_overwrite_existing_link(controller):
+    url = "https://dev.azure.com/myorg/proj/_git/repo/pullrequest/1"
+    controller.sync_pull_requests([_pr_with_url(1, url)], ORG)
+    controller.sync_pull_requests([_pr_with_url(1, url)], ORG)  # re-sync
+    assert controller.list_tasks()[0].description.count("Link:") == 1
+
+
 # ---- link persistence + mapping -----------------------------------------
 def test_pr_link_round_trip():
     repo = TaskRepository(":memory:")
