@@ -17,5 +17,8 @@ The only layer that imports Qt (PySide6). Talks to the app through
 - **Network I/O runs on a `QThread` worker** (`_SyncWorker`, `_LinearWorker`,
   `_CheckWorker`, `_DownloadWorker`) so the UI never blocks; hand fetched data to the
   controller to reconcile — don't do reconciliation logic in the view.
+- Both integration tabs emit `busy_changed(bool, str)` around each worker run
+  (`_start_worker` → True, `_cleanup_worker` → False); `MainWindow` shows a shared
+  footer busy bar + per-integration next-sync countdown from these + the poll timers.
 - Put reusable non-UI logic in `models/`/`controllers/`, not here.
 - Persisted UI/config state → `QSettings`; secrets → keyring via `services/credentials.py`.

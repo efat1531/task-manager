@@ -106,6 +106,9 @@ class IntegrationTab(QWidget):
     prs_fetched = Signal(dict, str)
     #: Emitted after the integration is removed, so the window can forget PR links.
     cleared = Signal()
+    #: Emitted (is_busy, operation_label) around every network worker run so the
+    #: window can show a shared footer busy indicator.
+    busy_changed = Signal(bool, str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -359,6 +362,9 @@ class IntegrationTab(QWidget):
 
         self._set_busy(True)
         self._status.setText("Testing…" if mode == "test" else "Syncing…")
+        self.busy_changed.emit(
+            True, "Testing Azure…" if mode == "test" else "Syncing Azure…"
+        )
 
         self._thread = QThread(self)
         self._worker = _SyncWorker(cfg, pat, mode, sources)
@@ -403,6 +409,7 @@ class IntegrationTab(QWidget):
 
     def _cleanup_worker(self) -> None:
         self._set_busy(False)
+        self.busy_changed.emit(False, "")
         if self._thread is not None:
             self._thread.quit()
             self._thread.wait()

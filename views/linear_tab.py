@@ -89,6 +89,9 @@ class LinearIntegrationTab(QWidget):
     issues_fetched = Signal(list)
     #: Emitted after the integration is removed, so the window forgets links.
     cleared = Signal()
+    #: Emitted (is_busy, operation_label) around every network worker run so the
+    #: window can show a shared footer busy indicator.
+    busy_changed = Signal(bool, str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -381,6 +384,10 @@ class LinearIntegrationTab(QWidget):
             "test": "Testing…", "teams": "Loading teams…",
             "meta": "Loading statuses & labels…",
         }.get(mode, "Syncing…"))
+        self.busy_changed.emit(True, {
+            "test": "Testing Linear…", "teams": "Loading Linear teams…",
+            "meta": "Loading Linear statuses…",
+        }.get(mode, "Syncing Linear…"))
 
         self._thread = QThread(self)
         self._worker = _LinearWorker(key, mode, cfg)
@@ -430,6 +437,7 @@ class LinearIntegrationTab(QWidget):
 
     def _cleanup_worker(self) -> None:
         self._set_busy(False)
+        self.busy_changed.emit(False, "")
         if self._thread is not None:
             self._thread.quit()
             self._thread.wait()

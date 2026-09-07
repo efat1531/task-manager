@@ -1,15 +1,31 @@
-# Task Manager v1.4.1
+# Task Manager v1.5.0
 
-Task Manager now ships a proper **Windows installer**, so it installs like a
-normal app — with Start Menu and Desktop shortcuts and an entry in Add/Remove
-Programs — instead of running as a loose portable file.
+This release sharpens both integrations. Linear tasks now follow their tickets far
+more faithfully, the Azure tab is clearer, and the app tells you at a glance when
+it's talking to a service and when the next auto-sync will run.
 
 ## ✨ New features
 
-- **Windows installer.** Download **`TaskManager-Setup.exe`** to install Task
-  Manager per-user (no admin prompt). It adds Start Menu and Desktop shortcuts
-  and registers an uninstaller under Settings → Apps. In-app updates keep working
-  exactly as before — the app still updates and relaunches itself.
+- **Clearer integration tabs.** The former "Integrations" tab is now simply
+  **Azure**, so it reads as a sibling to the **Linear** tab instead of a catch-all.
+- **Live sync feedback.** A busy indicator in the status bar appears whenever an
+  integration is contacting Azure or Linear (testing, syncing, or loading), so a
+  background sync is no longer invisible.
+- **Linear next-sync countdown.** The footer countdown now shows **both** the next
+  Azure *and* the next Linear auto-sync when each integration is active.
+- **Ticket-driven Linear priority.** A synced Linear task now takes its priority
+  straight from the Linear ticket, so re-prioritising a ticket re-prioritises its
+  task on the next sync.
+- **Azure "waiting for author".** A PR that's waiting on its author is parked at
+  low priority and unpinned, then restored once it's active again.
+- **Richer About box** with version, author, contact, and project links.
+
+## 🐛 Fixes
+
+- **Linear tasks reopen correctly.** A task auto-completed because its ticket left
+  the synced statuses **or** picked up an excluded label now **reopens** on the
+  next sync once the ticket returns to a synced status or the label is removed —
+  instead of staying stuck complete.
 
 ## 📦 Install
 
