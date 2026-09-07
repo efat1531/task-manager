@@ -186,7 +186,9 @@ class AzureDevOpsClient:
 
     # ---- parsing (pure) --------------------------------------------------
     @staticmethod
-    def _build_pr(item: dict, *, is_required: bool, is_author: bool) -> PullRequest:
+    def _build_pr(
+        item: dict, *, is_required: bool, is_author: bool, reviewer_vote: int = 0
+    ) -> PullRequest:
         """Project one raw Azure PR item onto a :class:`PullRequest`."""
         repo = item.get("repository") or {}
         project = (repo.get("project") or {}).get("name", "")
@@ -203,6 +205,7 @@ class AzureDevOpsClient:
             status=item.get("status", "active"),
             is_required=is_required,
             is_author=is_author,
+            reviewer_vote=reviewer_vote,
         )
 
     @classmethod
@@ -224,6 +227,7 @@ class AzureDevOpsClient:
                     item,
                     is_required=bool(matched.get("isRequired")),
                     is_author=False,
+                    reviewer_vote=int(matched.get("vote", 0) or 0),
                 )
             )
         return result

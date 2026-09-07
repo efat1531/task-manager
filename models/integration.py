@@ -73,9 +73,20 @@ class PullRequest:
     status: str = "active"          # active | completed | abandoned
     is_required: bool = False       # is the current user a *required* reviewer?
     is_author: bool = False         # did the current user create this PR?
+    # The current user's review vote on this PR, from the Azure reviewer entry:
+    # 10 approved, 5 approved-with-suggestions, 0 no vote, -5 waiting, -10 rejected.
+    # Only meaningful for review-source PRs; stays 0 for authored ones.
+    reviewer_vote: int = 0
     # Count of unresolved (active) comment threads. Only fetched for authored PRs;
     # a positive value pins the PR's task to the top as Urgent (see the controller).
     unresolved_comment_count: int = 0
+
+    @property
+    def review_completed(self) -> bool:
+        """True once the current user has cast any review vote (approved,
+        approved-with-suggestions, waiting, or rejected). Azure resets the vote
+        to 0 on a new push when the reset-votes policy is on, which clears this."""
+        return self.reviewer_vote != 0
 
 
 def pr_key(organization: str, pr_id: int, source: str = "review") -> str:

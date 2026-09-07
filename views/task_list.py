@@ -57,25 +57,51 @@ class TaskTable(QTableWidget):
         rect = self.visualRect(index)
         return index.row() if pos.y() < rect.center().y() else index.row() + 1
 
+    @staticmethod
+    def _reordered_ids(
+        row_ids: List[int | None], selected_rows, drop_row: int
+    ) -> List[int] | None:
+        """New task-id ordering after moving ``selected_rows`` to ``drop_row``.
+
+        Rows without an id (recurring occurrences) never move and are excluded
+        from the result; crucially, their mere presence no longer blocks the
+        reorder. Returns ``None`` when nothing would change.
+        """
+        selected = sorted(
+            r for r in selected_rows
+            if 0 <= r < len(row_ids) and row_ids[r] is not None
+        )
+        if not selected:
+            return None
+
+        moving = [row_ids[r] for r in selected]
+        remaining = [
+            tid for r, tid in enumerate(row_ids)
+            if tid is not None and r not in selected
+        ]
+        # ``drop_row`` counts every visible row (occurrences included); translate
+        # it into an index within the task-only ordering, then shift left by the
+        # moved rows that sat above the drop point.
+        tasks_before_drop = sum(
+            1 for r in range(min(drop_row, len(row_ids))) if row_ids[r] is not None
+        )
+        insert_at = tasks_before_drop - sum(1 for r in selected if r < drop_row)
+        insert_at = max(0, min(insert_at, len(remaining)))
+        new_order = remaining[:insert_at] + moving + remaining[insert_at:]
+
+        current = [tid for tid in row_ids if tid is not None]
+        return None if new_order == current else new_order
+
     def dropEvent(self, event) -> None:  # noqa: N802 (Qt override)
         if event.source() is not self:
             event.ignore()
             return
 
         drop_row = self._drop_row(event)
-        selected = sorted({idx.row() for idx in self.selectionModel().selectedRows()})
-        ids: List[int] = [self._row_id(r) for r in range(self.rowCount())]
-        if not selected or None in ids:
-            event.ignore()
-            return
-
-        moving = [ids[r] for r in selected]
-        remaining = [tid for r, tid in enumerate(ids) if r not in selected]
-        # Removing rows above the drop point shifts the insertion index left.
-        insert_at = drop_row - sum(1 for r in selected if r < drop_row)
-        new_order = remaining[:insert_at] + moving + remaining[insert_at:]
-
-        if new_order == ids:
+        row_ids: List[int | None] = [self._row_id(r) for r in range(self.rowCount())]
+        selected = {idx.row() for idx in self.selectionModel().selectedRows()}
+        new_order = self._reordered_ids(row_ids, selected, drop_row)
+        if new_order is None:
             event.ignore()
             return
 

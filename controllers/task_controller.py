@@ -23,6 +23,48 @@ class TaskController:
     def list_tasks(self, order_by: str = "sort_order") -> List[Task]:
         return self._repo.list(order_by=order_by)
 
+    @staticmethod
+    def order_rows(tasks: List[Task], occurrences: List[Occurrence], order_by: str):
+        """Merge one-off tasks and recurring occurrences into a single ordering.
+
+        Under manual ordering (``sort_order``) occurrences have no place in the
+        drag-reorderable sequence, so they simply follow the tasks (in the order
+        the caller supplied). For every other sort the two kinds are interleaved
+        by the chosen key so, e.g., a Medium occurrence sits above a Low task
+        instead of being stranded at the bottom. Tasks with unresolved PR
+        comments stay pinned to the very top, matching the repository's sort.
+        """
+        rows = list(tasks) + list(occurrences)
+        if order_by == "sort_order":
+            return rows
+
+        def pinned(item) -> int:
+            # 0 sorts before 1, so pinned (unresolved) rows come first.
+            return 0 if (getattr(item, "unresolved_comments", 0) or 0) > 0 else 1
+
+        def priority_key(item) -> int:
+            return -int(item.priority)  # higher priority first
+
+        def optional_asc(value):
+            # Missing/empty values sort last, present ones ascending.
+            return (1, "") if not value else (0, value)
+
+        def title_key(item) -> str:
+            return item.title.lower()
+
+        if order_by == "priority":
+            key = lambda i: (pinned(i), priority_key(i),
+                             optional_asc(getattr(i, "deadline", None)), title_key(i))
+        elif order_by == "deadline":
+            key = lambda i: (pinned(i), optional_asc(getattr(i, "deadline", None)),
+                             priority_key(i), title_key(i))
+        elif order_by == "created_at":
+            key = lambda i: (pinned(i), optional_asc(getattr(i, "created_at", None)),
+                             title_key(i))
+        else:
+            return rows
+        return sorted(rows, key=key)
+
     def search_tasks(self, query: str, order_by: str = "sort_order") -> List[Task]:
         """Case-insensitive substring match over title and description."""
         query = query.strip().lower()
@@ -205,10 +247,14 @@ class TaskController:
           task was since edited or deleted.
         - A previously-linked PR that is *absent* from ``prs`` (merged, abandoned,
           or the user was dropped) has its task completed.
+        - For the "review" source, the task also tracks the user's own review:
+          once they cast any vote the task is completed, and if the vote is later
+          reset to 0 (e.g. a new commit reset approvals) the task is reopened.
 
         Reconciliation is scoped to ``source`` ("review" | "author"): only links
         belonging to that source are considered, so syncing one source never
-        auto-completes the other's tasks.
+        auto-completes the other's tasks. The returned summary counts
+        ``created`` / ``skipped`` / ``completed`` / ``reopened``.
         """
         prefix = f"{source}:"
         existing = {
@@ -217,7 +263,7 @@ class TaskController:
             if key.startswith(prefix)
         }
         current_keys = set()
-        created = skipped = completed = 0
+        created = skipped = completed = reopened = 0
 
         for pr in prs:
             key = pr_key(organization, pr.pr_id, source)
@@ -238,6 +284,18 @@ class TaskController:
                 self._repo.set_unresolved_comments(
                     task_id, pr.unresolved_comment_count
                 )
+            # Mirror my review state onto review-source tasks: casting any vote
+            # completes the task; a vote reset back to 0 (e.g. a new commit reset
+            # approvals) reopens it so the PR gets another look.
+            elif source == "review":
+                task = self._repo.get(task_id)
+                if task is not None:
+                    if pr.review_completed and not task.completed:
+                        self._repo.set_completed(task_id, True)
+                        completed += 1
+                    elif not pr.review_completed and task.completed:
+                        self._repo.set_completed(task_id, False)
+                        reopened += 1
 
         # Auto-complete tasks for PRs of this source that are no longer open.
         for key, task_id in existing.items():
@@ -248,7 +306,12 @@ class TaskController:
                 self._repo.set_completed(task_id, True)
                 completed += 1
 
-        return {"created": created, "skipped": skipped, "completed": completed}
+        return {
+            "created": created,
+            "skipped": skipped,
+            "completed": completed,
+            "reopened": reopened,
+        }
 
     def clear_pr_links(self) -> None:
         """Forget which PRs have been synced. Tasks already created are kept, but

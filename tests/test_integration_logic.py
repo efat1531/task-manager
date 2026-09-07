@@ -40,14 +40,14 @@ def _pr(pr_id: int, title: str = "Feature") -> PullRequest:
 # ---- dedup ---------------------------------------------------------------
 def test_sync_creates_one_task_per_pr(controller):
     summary = controller.sync_pull_requests([_pr(1), _pr(2)], ORG)
-    assert summary == {"created": 2, "skipped": 0, "completed": 0}
+    assert summary == {"created": 2, "skipped": 0, "completed": 0, "reopened": 0}
     assert len(controller.list_tasks()) == 2
 
 
 def test_resync_same_prs_creates_no_duplicates(controller):
     controller.sync_pull_requests([_pr(1), _pr(2)], ORG)
     summary = controller.sync_pull_requests([_pr(1), _pr(2)], ORG)
-    assert summary == {"created": 0, "skipped": 2, "completed": 0}
+    assert summary == {"created": 0, "skipped": 2, "completed": 0, "reopened": 0}
     assert len(controller.list_tasks()) == 2
 
 
@@ -198,7 +198,7 @@ def test_sources_do_not_cross_autocomplete(controller):
     # Re-syncing only the review source (author PR absent from THIS list) must not
     # auto-complete the authored PR's task — it belongs to a different source.
     summary = controller.sync_pull_requests([review_pr], ORG, source="review")
-    assert summary == {"created": 0, "skipped": 1, "completed": 0}
+    assert summary == {"created": 0, "skipped": 1, "completed": 0, "reopened": 0}
     by_title = {t.title: t for t in controller.list_tasks()}
     assert by_title["Your PR #2: My PR"].completed is False
 
@@ -271,13 +271,102 @@ def test_resync_refreshes_flag_on_already_linked_pr(controller):
     summary = controller.sync_pull_requests(
         [_author_pr(1, unresolved=0)], ORG, source="author"
     )
-    assert summary == {"created": 0, "skipped": 1, "completed": 0}
+    assert summary == {"created": 0, "skipped": 1, "completed": 0, "reopened": 0}
     assert controller.list_tasks()[0].unresolved_comments == 0
 
 
 def test_review_pr_never_flagged(controller):
     controller.sync_pull_requests([_pr(1)], ORG, source="review")
     assert controller.list_tasks()[0].unresolved_comments == 0
+
+
+# ---- review-vote auto-complete / reopen ----------------------------------
+def _voted_pr(pr_id: int, vote: int, is_required: bool = True,
+              title: str = "Feature") -> PullRequest:
+    return PullRequest(pr_id=pr_id, title=title, repository="repo",
+                       is_required=is_required, reviewer_vote=vote)
+
+
+def test_review_completed_property():
+    assert _voted_pr(1, 10).review_completed is True   # approved
+    assert _voted_pr(1, 5).review_completed is True    # approved w/ suggestions
+    assert _voted_pr(1, -10).review_completed is True  # rejected
+    assert _voted_pr(1, -5).review_completed is True   # waiting for author
+    assert _voted_pr(1, 0).review_completed is False   # no vote / reset
+
+
+def test_voted_review_pr_autocompletes_on_creation(controller):
+    summary = controller.sync_pull_requests([_voted_pr(1, 10)], ORG, source="review")
+    assert summary["created"] == 1
+    assert summary["completed"] == 1
+    assert controller.list_tasks()[0].completed is True
+
+
+def test_unvoted_review_pr_stays_open(controller):
+    controller.sync_pull_requests([_voted_pr(1, 0)], ORG, source="review")
+    assert controller.list_tasks()[0].completed is False
+
+
+def test_voting_later_completes_already_linked_task(controller):
+    # First sync: no vote yet -> task stays open.
+    controller.sync_pull_requests([_voted_pr(1, 0)], ORG, source="review")
+    assert controller.list_tasks()[0].completed is False
+    # Second sync: I've now approved -> the already-linked task is completed.
+    summary = controller.sync_pull_requests([_voted_pr(1, 10)], ORG, source="review")
+    assert summary == {"created": 0, "skipped": 1, "completed": 1, "reopened": 0}
+    assert controller.list_tasks()[0].completed is True
+
+
+def test_vote_reset_reopens_completed_task(controller):
+    controller.sync_pull_requests([_voted_pr(1, 10)], ORG, source="review")
+    assert controller.list_tasks()[0].completed is True
+    # A new commit reset my vote to 0 -> the task reopens for another look.
+    summary = controller.sync_pull_requests([_voted_pr(1, 0)], ORG, source="review")
+    assert summary == {"created": 0, "skipped": 1, "completed": 0, "reopened": 1}
+    assert controller.list_tasks()[0].completed is False
+
+
+def test_optional_reviewer_vote_also_completes(controller):
+    summary = controller.sync_pull_requests(
+        [_voted_pr(1, 10, is_required=False)], ORG, source="review"
+    )
+    assert summary["completed"] == 1
+    assert controller.list_tasks()[0].completed is True
+
+
+def test_author_source_ignores_vote_logic(controller):
+    # An authored PR carries no vote; completing/reopening must not apply to it.
+    controller.sync_pull_requests([_author_pr(1)], ORG, source="author")
+    task = controller.list_tasks()[0]
+    controller.toggle_completed(task)  # user completes it manually
+    assert controller.list_tasks()[0].completed is True
+    summary = controller.sync_pull_requests([_author_pr(1)], ORG, source="author")
+    # No spurious reopen — the vote branch is review-source only.
+    assert summary["reopened"] == 0
+    assert controller.list_tasks()[0].completed is True
+
+
+def test_parse_prs_extracts_reviewer_vote():
+    me = "guid-me"
+    payload = {
+        "value": [
+            {
+                "pullRequestId": 301,
+                "title": "Approved by me",
+                "reviewers": [{"id": me, "isRequired": True, "vote": 10}],
+            },
+            {
+                "pullRequestId": 302,
+                "title": "Not yet voted",
+                "reviewers": [{"id": me, "isRequired": True}],
+            },
+        ]
+    }
+    prs = AzureDevOpsClient._parse_prs(payload, me)
+    votes = {p.pr_id: p.reviewer_vote for p in prs}
+    assert votes == {301: 10, 302: 0}
+    assert prs[0].review_completed is True
+    assert prs[1].review_completed is False
 
 
 # ---- rate-limit handling (no live network) -------------------------------

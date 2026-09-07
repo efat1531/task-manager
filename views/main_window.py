@@ -206,8 +206,10 @@ class MainWindow(QMainWindow):
             self._controller.occurrences_on(self._selected_date()),
             key=lambda o: (-int(o.priority), o.title.lower()),
         )
-        # One-off tasks are always shown; occurrences follow, grouped after them.
-        all_rows = list(tasks) + occurrences
+        # Merge tasks and occurrences. Under manual order the occurrences follow
+        # the tasks; under every other sort they are interleaved by the sort key
+        # so priority/deadline ordering applies to the whole list, not just tasks.
+        all_rows = self._controller.order_rows(list(tasks), occurrences, order_by)
 
         self._sync_category_filter(all_rows)
 
@@ -557,7 +559,7 @@ class MainWindow(QMainWindow):
     def _on_prs_fetched(self, results: dict, organization: str) -> None:
         """A background sync returned PRs per source; reconcile and refresh."""
         cfg = self._integration_tab.current_config()
-        totals = {"created": 0, "skipped": 0, "completed": 0}
+        totals = {"created": 0, "skipped": 0, "completed": 0, "reopened": 0}
         for source, prs in results.items():
             summary = self._controller.sync_pull_requests(
                 prs, organization, source=source, config=cfg
