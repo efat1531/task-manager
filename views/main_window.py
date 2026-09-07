@@ -1,6 +1,8 @@
 """Main application window: task table with create/edit/delete/complete + sorting."""
 from __future__ import annotations
 
+import html
+
 from PySide6.QtCore import QDate, Qt, QTimer
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -23,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from controllers.task_controller import TaskController
+from models import linkify
 from models.schedule import Occurrence
 from models.task import Task
 from services import notifier
@@ -259,21 +262,40 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def _populate_row(self, row: int, task) -> None:
+        unresolved = getattr(task, "unresolved_comments", 0) or 0
+
         status = QTableWidgetItem("✓" if task.completed else "")
         status.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Recurring occurrences get a marker so they read differently from tasks.
-        title = f"🔁 {task.title}" if isinstance(task, Occurrence) else task.title
-        cells = [
+        # Stash the Task on the first column for retrieval on select.
+        status.setData(Qt.ItemDataRole.UserRole, task)
+
+        # 🔁 marks recurring occurrences; 🔴 marks authored PRs with unresolved
+        # comments (pinned to the top and shown as Urgent).
+        prefix = "🔁 " if isinstance(task, Occurrence) else ""
+        if unresolved > 0:
+            prefix += "🔴 "
+        title = f"{prefix}{task.title}"
+
+        # While comments are unresolved the task reads as Urgent; the stored
+        # priority is left untouched (display + sort override only).
+        priority_label = "Urgent" if unresolved > 0 else task.priority.label
+
+        # A URL anywhere in the task turns the title into a link that opens the
+        # default browser; the PR "#123" token (when present) is the anchor, with
+        # a trailing ↗. Trade-off: clicking the title area of a linked row no
+        # longer selects/edit-opens it — select via any other cell instead.
+        url = linkify.first_url(task.title, task.description)
+        title_item = None if url else QTableWidgetItem(title)
+
+        row_items = [
             status,
-            QTableWidgetItem(title),
-            QTableWidgetItem(task.priority.label),
+            QTableWidgetItem(priority_label),
             QTableWidgetItem(task.deadline or "—"),
             QTableWidgetItem(task.category or "—"),
         ]
-        for col, item in enumerate(cells):
-            # Stash the Task on the first column for retrieval on select.
-            if col == 0:
-                item.setData(Qt.ItemDataRole.UserRole, task)
+        if title_item is not None:
+            row_items.append(title_item)
+        for item in row_items:
             if task.completed:
                 font = item.font()
                 font.setStrikeOut(True)
@@ -281,7 +303,55 @@ class MainWindow(QMainWindow):
                 item.setForeground(QColor(140, 140, 140))
             elif task.is_overdue:
                 item.setForeground(self._overdue_color)
-            self._table.setItem(row, col, item)
+
+        self._table.setItem(row, 0, status)
+        self._table.setItem(row, 2, row_items[1])
+        self._table.setItem(row, 3, row_items[2])
+        self._table.setItem(row, 4, row_items[3])
+
+        # Clear any link widget left over from a previous population of this row.
+        self._table.removeCellWidget(row, 1)
+        if url:
+            self._table.setCellWidget(row, 1, self._make_title_link(task, title, url))
+        else:
+            self._table.setItem(row, 1, title_item)
+
+        if unresolved > 0:
+            tip = f"{unresolved} unresolved comment(s)"
+            for col in range(len(_HEADERS)):
+                cell = self._table.item(row, col)
+                widget = self._table.cellWidget(row, col)
+                if cell is not None:
+                    cell.setToolTip(tip)
+                if widget is not None:
+                    widget.setToolTip(tip)
+
+    def _make_title_link(self, task, display_title: str, url: str) -> QLabel:
+        """A rich-text title cell whose PR number / ↗ opens ``url`` in the browser."""
+        href = html.escape(url, quote=True)
+        text = html.escape(display_title)
+        number = linkify.pr_number(task.title)
+        if number and number in text:
+            anchor = f'<a href="{href}">{html.escape(number)}</a>'
+            text = text.replace(html.escape(number), anchor, 1)
+        content = f'{text} <a href="{href}">↗</a>'
+
+        # Bake the row styling into the span (completed = struck-through/gray,
+        # overdue = tinted); links keep their own colour.
+        style = ""
+        if task.completed:
+            style = "color:#8c8c8c; text-decoration: line-through;"
+        elif getattr(task, "is_overdue", False):
+            style = f"color:{self._overdue_color.name()};"
+        if style:
+            content = f'<span style="{style}">{content}</span>'
+
+        label = QLabel(content)
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setOpenExternalLinks(True)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
+        label.setContentsMargins(4, 0, 4, 0)
+        return label
 
     def _selected_item(self):
         """Return the focused row's Task or Occurrence, or None (for single-item ops)."""

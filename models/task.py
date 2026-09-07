@@ -39,6 +39,9 @@ class Task:
     sort_order: int = 0
     id: Optional[int] = None
     created_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    # Unresolved (active) PR comment threads. Set by the Azure sync for authored
+    # PRs; a positive value pins the task to the top and displays it as Urgent.
+    unresolved_comments: int = 0
 
     def _due_date(self):
         """Parsed deadline date, or None if unset/uncompletable/malformed."""

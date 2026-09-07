@@ -14,15 +14,16 @@ from models.task import Priority, Task
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    title       TEXT    NOT NULL,
-    description TEXT    NOT NULL DEFAULT '',
-    priority    INTEGER NOT NULL DEFAULT 2,
-    sort_order  INTEGER NOT NULL DEFAULT 0,
-    deadline    TEXT,
-    completed   INTEGER NOT NULL DEFAULT 0,
-    category    TEXT    NOT NULL DEFAULT '',
-    created_at  TEXT    NOT NULL
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    title               TEXT    NOT NULL,
+    description         TEXT    NOT NULL DEFAULT '',
+    priority            INTEGER NOT NULL DEFAULT 2,
+    sort_order          INTEGER NOT NULL DEFAULT 0,
+    deadline            TEXT,
+    completed           INTEGER NOT NULL DEFAULT 0,
+    category            TEXT    NOT NULL DEFAULT '',
+    created_at          TEXT    NOT NULL,
+    unresolved_comments INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS schedules (
@@ -56,7 +57,10 @@ CREATE TABLE IF NOT EXISTS pr_links (
 """
 
 # Column order used by _row_to_task / SELECT statements.
-_COLUMNS = "id, title, description, priority, sort_order, deadline, completed, category, created_at"
+_COLUMNS = (
+    "id, title, description, priority, sort_order, deadline, completed, "
+    "category, created_at, unresolved_comments"
+)
 
 # Column order for schedule SELECTs / _row_to_schedule.
 _SCHED_COLUMNS = (
@@ -80,7 +84,25 @@ class TaskRepository:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON;")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    # ---- schema migration ------------------------------------------------
+    def _migrate(self) -> None:
+        """Bring an older database up to the current schema.
+
+        ``CREATE TABLE IF NOT EXISTS`` never adds columns to a table that already
+        exists, so new columns are added here with ``ALTER TABLE`` when missing.
+        """
+        cols = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(tasks)").fetchall()
+        }
+        if "unresolved_comments" not in cols:
+            self._conn.execute(
+                "ALTER TABLE tasks ADD COLUMN "
+                "unresolved_comments INTEGER NOT NULL DEFAULT 0"
+            )
 
     # ---- helpers ---------------------------------------------------------
     @staticmethod
@@ -95,16 +117,19 @@ class TaskRepository:
             completed=bool(row["completed"]),
             category=row["category"],
             created_at=row["created_at"],
+            unresolved_comments=row["unresolved_comments"],
         )
 
     # ---- create ----------------------------------------------------------
     def add(self, task: Task) -> Task:
         cur = self._conn.execute(
             """INSERT INTO tasks
-                   (title, description, priority, sort_order, deadline, completed, category, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (title, description, priority, sort_order, deadline, completed,
+                    category, created_at, unresolved_comments)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (task.title, task.description, int(task.priority), task.sort_order,
-             task.deadline, int(task.completed), task.category, task.created_at),
+             task.deadline, int(task.completed), task.category, task.created_at,
+             int(task.unresolved_comments)),
         )
         self._conn.commit()
         task.id = cur.lastrowid
@@ -126,6 +151,9 @@ class TaskRepository:
             "created_at": "created_at ASC",
         }
         clause = allowed.get(order_by, allowed["sort_order"])
+        # Tasks with unresolved PR comments (authored PRs) are pinned to the very
+        # top regardless of the chosen sort — a SQLite boolean sorts 1 before 0.
+        clause = f"(unresolved_comments > 0) DESC, {clause}"
         rows = self._conn.execute(
             f"SELECT {_COLUMNS} FROM tasks ORDER BY {clause}"
         ).fetchall()
@@ -138,10 +166,12 @@ class TaskRepository:
         self._conn.execute(
             """UPDATE tasks SET
                    title = ?, description = ?, priority = ?, sort_order = ?,
-                   deadline = ?, completed = ?, category = ?
+                   deadline = ?, completed = ?, category = ?,
+                   unresolved_comments = ?
                WHERE id = ?""",
             (task.title, task.description, int(task.priority), task.sort_order,
-             task.deadline, int(task.completed), task.category, task.id),
+             task.deadline, int(task.completed), task.category,
+             int(task.unresolved_comments), task.id),
         )
         self._conn.commit()
 
@@ -160,16 +190,24 @@ class TaskRepository:
         )
         self._conn.commit()
 
+    def set_unresolved_comments(self, task_id: int, count: int) -> None:
+        """Record how many unresolved PR comment threads a task's PR has."""
+        self._conn.execute(
+            "UPDATE tasks SET unresolved_comments = ? WHERE id = ?",
+            (int(count), task_id),
+        )
+        self._conn.commit()
+
     def restore(self, task: Task) -> None:
         """Re-insert a previously deleted task, preserving its original id."""
         if task.id is None:
             raise ValueError("Cannot restore a task without an id.")
         self._conn.execute(
             f"""INSERT INTO tasks ({_COLUMNS})
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (task.id, task.title, task.description, int(task.priority),
              task.sort_order, task.deadline, int(task.completed),
-             task.category, task.created_at),
+             task.category, task.created_at, int(task.unresolved_comments)),
         )
         self._conn.commit()
 

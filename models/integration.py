@@ -66,12 +66,16 @@ class PullRequest:
     pr_id: int
     title: str
     repository: str = ""
+    repository_id: str = ""         # GUID; needed to query the PR's comment threads
     project: str = ""
     author: str = ""
     url: str = ""
     status: str = "active"          # active | completed | abandoned
     is_required: bool = False       # is the current user a *required* reviewer?
     is_author: bool = False         # did the current user create this PR?
+    # Count of unresolved (active) comment threads. Only fetched for authored PRs;
+    # a positive value pins the PR's task to the top as Urgent (see the controller).
+    unresolved_comment_count: int = 0
 
 
 def pr_key(organization: str, pr_id: int, source: str = "review") -> str:

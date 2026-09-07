@@ -70,7 +70,9 @@ class _SyncWorker(QObject):
                 if "review" in self._sources:
                     results["review"] = client.list_review_requested_prs(identity)
                 if "author" in self._sources:
-                    results["author"] = client.list_created_prs(identity)
+                    authored = client.list_created_prs(identity)
+                    self._attach_comment_counts(client, authored)
+                    results["author"] = authored
                 self.synced.emit(results, self._config.org_slug)
         except AzureError as exc:
             self.failed.emit(str(exc))
@@ -78,6 +80,21 @@ class _SyncWorker(QObject):
             self.failed.emit(f"Unexpected error: {exc}")
         finally:
             self.finished.emit()
+
+    @staticmethod
+    def _attach_comment_counts(client: AzureDevOpsClient, prs: list) -> None:
+        """Fill in each authored PR's unresolved comment count.
+
+        A failure fetching one PR's threads degrades that PR to 0 rather than
+        aborting the whole sync — the rest of the reconciliation still runs.
+        """
+        for pr in prs:
+            try:
+                pr.unresolved_comment_count = client.active_comment_count(
+                    pr.repository_id, pr.pr_id
+                )
+            except AzureError:
+                pr.unresolved_comment_count = 0
 
 
 class IntegrationTab(QWidget):
