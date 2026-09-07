@@ -31,6 +31,7 @@ from models.task import Task
 from services import notifier
 from views import theme
 from views.integration_tab import IntegrationTab
+from views.linear_tab import LinearIntegrationTab
 from views.task_dialog import TaskDialog
 from views.task_list import TaskTable
 
@@ -66,12 +67,22 @@ class MainWindow(QMainWindow):
         self._integration_tab.cleared.connect(self._on_integration_cleared)
         self._tabs.addTab(self._integration_tab, "Integrations")
 
+        self._linear_tab = LinearIntegrationTab()
+        self._linear_tab.issues_fetched.connect(self._on_linear_issues_fetched)
+        self._linear_tab.cleared.connect(self._on_linear_cleared)
+        self._tabs.addTab(self._linear_tab, "Linear")
+
         self.setCentralWidget(self._tabs)
 
         # Background auto-poll for the Azure integration.
         self._poll_timer = QTimer(self)
         self._poll_timer.timeout.connect(self._auto_sync)
         self._start_poll_timer()
+
+        # Background auto-poll for the Linear integration.
+        self._linear_poll_timer = QTimer(self)
+        self._linear_poll_timer.timeout.connect(self._auto_sync_linear)
+        self._start_linear_poll_timer()
 
     def _build_tasks_tab(self) -> QWidget:
         central = QWidget()
@@ -586,6 +597,32 @@ class MainWindow(QMainWindow):
             self._poll_timer.start(max(1, cfg.poll_minutes) * 60_000)
         else:
             self._poll_timer.stop()
+
+    # ---- Linear integration ---------------------------------------------
+    def _on_linear_issues_fetched(self, issues: list) -> None:
+        """A background sync returned Linear issues; reconcile and refresh."""
+        cfg = self._linear_tab.current_config()
+        summary = self._controller.sync_linear_issues(issues, cfg)
+        self._linear_tab.report_sync_result(summary)
+        self._start_linear_poll_timer()  # pick up any interval/enabled change
+        self.refresh()
+
+    def _auto_sync_linear(self) -> None:
+        self._linear_tab.trigger_sync(auto=True)
+
+    def _on_linear_cleared(self) -> None:
+        """The integration was removed: forget Linear links and stop polling."""
+        self._controller.clear_linear_links()
+        self._linear_poll_timer.stop()
+        self.refresh()
+
+    def _start_linear_poll_timer(self) -> None:
+        """(Re)start the Linear auto-poll timer from the saved config, or stop it."""
+        cfg = self._linear_tab.current_config()
+        if cfg.has_active_sources():
+            self._linear_poll_timer.start(max(1, cfg.poll_minutes) * 60_000)
+        else:
+            self._linear_poll_timer.stop()
 
     # ---- theme -----------------------------------------------------------
     def _apply_theme(self) -> None:

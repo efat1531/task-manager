@@ -355,9 +355,19 @@ class TaskRepository:
         self._conn.execute("DELETE FROM pr_links WHERE pr_key = ?", (pr_key,))
         self._conn.commit()
 
-    def clear_pr_links(self) -> None:
-        """Forget every PR->task link (used when removing the integration)."""
-        self._conn.execute("DELETE FROM pr_links")
+    def clear_pr_links(self, prefix: Optional[str] = None) -> None:
+        """Forget stored external->task links (used when removing an integration).
+
+        With no ``prefix`` every link is removed (the original behaviour). With a
+        ``prefix`` (e.g. ``"linear:"``) only keys starting with it are removed, so
+        removing one integration leaves the other's links intact.
+        """
+        if prefix:
+            self._conn.execute(
+                "DELETE FROM pr_links WHERE pr_key LIKE ? || '%'", (prefix,)
+            )
+        else:
+            self._conn.execute("DELETE FROM pr_links")
         self._conn.commit()
 
     def close(self) -> None:
