@@ -4,10 +4,11 @@ Holds no Qt imports so its logic stays unit-testable without a display.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Callable, List, Optional, Set, Tuple
 
-from models.integration import PullRequest, pr_key, pr_to_task_fields
+from models.integration import AzureConfig, PullRequest, pr_key, pr_to_task_fields
 from models.schedule import Frequency, Occurrence, Schedule, occurs_on
 from models.task import Priority, Task
 from models.task_repository import TaskRepository
@@ -188,9 +189,13 @@ class TaskController:
 
     # ---- Azure pull-request sync ----------------------------------------
     def sync_pull_requests(
-        self, prs: List[PullRequest], organization: str
+        self,
+        prs: List[PullRequest],
+        organization: str,
+        source: str = "review",
+        config: Optional[AzureConfig] = None,
     ) -> dict:
-        """Reconcile the fetched review-requested PRs against existing links.
+        """Reconcile the fetched PRs for one ``source`` against existing links.
 
         The network fetch happens in the caller (a background worker); this method
         is pure DB logic so the dedup + auto-complete behaviour stays testable.
@@ -199,24 +204,33 @@ class TaskController:
         - A PR that already has a link is skipped — never duplicated, even if its
           task was since edited or deleted.
         - A previously-linked PR that is *absent* from ``prs`` (merged, abandoned,
-          or the user was dropped as a required reviewer) has its task completed.
+          or the user was dropped) has its task completed.
+
+        Reconciliation is scoped to ``source`` ("review" | "author"): only links
+        belonging to that source are considered, so syncing one source never
+        auto-completes the other's tasks.
         """
-        existing = self._repo.list_pr_links()
+        prefix = f"{source}:"
+        existing = {
+            key: task_id
+            for key, task_id in self._repo.list_pr_links().items()
+            if key.startswith(prefix)
+        }
         current_keys = set()
         created = skipped = completed = 0
 
         for pr in prs:
-            key = pr_key(organization, pr.pr_id)
+            key = pr_key(organization, pr.pr_id, source)
             current_keys.add(key)
             if key in existing:
                 skipped += 1
                 continue
-            fields = pr_to_task_fields(pr)
+            fields = pr_to_task_fields(pr, config)
             task = self.create_task(**fields)
             self._repo.link_pr(key, task.id)
             created += 1
 
-        # Auto-complete tasks for PRs that are no longer open review requests.
+        # Auto-complete tasks for PRs of this source that are no longer open.
         for key, task_id in existing.items():
             if key in current_keys:
                 continue
@@ -231,6 +245,43 @@ class TaskController:
         """Forget which PRs have been synced. Tasks already created are kept, but
         an open PR may produce a fresh task on a future sync."""
         self._repo.clear_pr_links()
+
+    # ---- export ----------------------------------------------------------
+    def tasks_for_day(self, iso_date: str) -> List[dict]:
+        """Serializable records for everything scheduled on ``iso_date``:
+        one-off tasks whose deadline is that date, plus every recurring
+        occurrence that falls on it. Enums are coerced to plain strings."""
+        records: List[dict] = []
+        for task in self._repo.list():
+            if task.deadline == iso_date:
+                records.append({
+                    "type": "task",
+                    "id": task.id,
+                    "title": task.title,
+                    "description": task.description,
+                    "priority": task.priority.label,
+                    "deadline": task.deadline,
+                    "category": task.category,
+                    "completed": task.completed,
+                    "created_at": task.created_at,
+                })
+        for occ in self.occurrences_on(iso_date):
+            records.append({
+                "type": "occurrence",
+                "schedule_id": occ.schedule_id,
+                "title": occ.title,
+                "description": occ.description,
+                "priority": occ.priority.label,
+                "date": occ.date,
+                "category": occ.category,
+                "completed": occ.completed,
+            })
+        return records
+
+    def export_day_json(self, iso_date: str) -> str:
+        """Pretty-printed JSON of :meth:`tasks_for_day`, ready for the clipboard."""
+        payload = {"date": iso_date, "tasks": self.tasks_for_day(iso_date)}
+        return json.dumps(payload, indent=2, ensure_ascii=False)
 
     # ---- undo ------------------------------------------------------------
     def can_undo(self) -> bool:

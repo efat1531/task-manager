@@ -74,18 +74,31 @@ class AzureDevOpsClient:
             raise AzureError("Could not determine the authenticated user from the token.")
         return user_id
 
-    def list_review_requested_prs(self, reviewer_id: str) -> List[PullRequest]:
-        """Active PRs where ``reviewer_id`` is a *required* reviewer."""
+    def _prs_base(self) -> str:
         base = self._org_base()
         if self._project:
             base = f"{base}/{urllib.parse.quote(self._project)}"
+        return base
+
+    def list_review_requested_prs(self, reviewer_id: str) -> List[PullRequest]:
+        """Active PRs where ``reviewer_id`` is listed as a reviewer."""
         query = urllib.parse.urlencode({
             "searchCriteria.status": "active",
             "searchCriteria.reviewerId": reviewer_id,
             "api-version": _API_VERSION,
         })
-        data = self._get(f"{base}/_apis/git/pullrequests?{query}")
+        data = self._get(f"{self._prs_base()}/_apis/git/pullrequests?{query}")
         return self._parse_prs(data, reviewer_id)
+
+    def list_created_prs(self, creator_id: str) -> List[PullRequest]:
+        """Active PRs authored by ``creator_id`` (the token owner's GUID)."""
+        query = urllib.parse.urlencode({
+            "searchCriteria.status": "active",
+            "searchCriteria.creatorId": creator_id,
+            "api-version": _API_VERSION,
+        })
+        data = self._get(f"{self._prs_base()}/_apis/git/pullrequests?{query}")
+        return self._parse_created_prs(data)
 
     def test_connection(self) -> tuple[bool, str]:
         """Return (ok, message). Never raises — safe to call from the UI."""
@@ -101,7 +114,26 @@ class AzureDevOpsClient:
 
     # ---- parsing (pure) --------------------------------------------------
     @staticmethod
-    def _parse_prs(payload: dict, reviewer_id: str) -> List[PullRequest]:
+    def _build_pr(item: dict, *, is_required: bool, is_author: bool) -> PullRequest:
+        """Project one raw Azure PR item onto a :class:`PullRequest`."""
+        repo = item.get("repository") or {}
+        project = (repo.get("project") or {}).get("name", "")
+        created_by = item.get("createdBy") or {}
+        web = ((item.get("_links") or {}).get("web") or {}).get("href", "")
+        return PullRequest(
+            pr_id=item.get("pullRequestId"),
+            title=item.get("title", ""),
+            repository=repo.get("name", ""),
+            project=project,
+            author=created_by.get("displayName", ""),
+            url=web,
+            status=item.get("status", "active"),
+            is_required=is_required,
+            is_author=is_author,
+        )
+
+    @classmethod
+    def _parse_prs(cls, payload: dict, reviewer_id: str) -> List[PullRequest]:
         """Build PullRequests for every PR where the given reviewer is listed —
         whether they are a required or an optional reviewer. ``is_required``
         records which. Pure: no network, safe to unit-test."""
@@ -114,21 +146,20 @@ class AzureDevOpsClient:
                     break
             if matched is None:
                 continue
-            required = bool(matched.get("isRequired"))
-            repo = item.get("repository") or {}
-            project = (repo.get("project") or {}).get("name", "")
-            created_by = item.get("createdBy") or {}
-            web = ((item.get("_links") or {}).get("web") or {}).get("href", "")
             result.append(
-                PullRequest(
-                    pr_id=item.get("pullRequestId"),
-                    title=item.get("title", ""),
-                    repository=repo.get("name", ""),
-                    project=project,
-                    author=created_by.get("displayName", ""),
-                    url=web,
-                    status=item.get("status", "active"),
-                    is_required=required,
+                cls._build_pr(
+                    item,
+                    is_required=bool(matched.get("isRequired")),
+                    is_author=False,
                 )
             )
         return result
+
+    @classmethod
+    def _parse_created_prs(cls, payload: dict) -> List[PullRequest]:
+        """Build PullRequests for every authored PR in the payload (``is_author``
+        set). Pure: no network, safe to unit-test."""
+        return [
+            cls._build_pr(item, is_required=False, is_author=True)
+            for item in payload.get("value", [])
+        ]

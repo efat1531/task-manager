@@ -20,6 +20,8 @@ schedules, and auto-generate review tasks from your Azure DevOps pull requests.
 - Filter by **status** (all / open / completed) and by **category**, and **live
   search** across title and description.
 - **Undo** deletes with a button or `Ctrl+Z`.
+- **Export a day to JSON** — pick a date and copy that day's tasks (one-off tasks due that
+  date plus recurring occurrences on it) to the clipboard as JSON via **Export day…**.
 - Startup **reminders** for overdue / due-today tasks (desktop notifications via
   `plyer`).
 - **Dark mode** toggle, remembered across launches (`QSettings`).
@@ -36,14 +38,18 @@ schedules, and auto-generate review tasks from your Azure DevOps pull requests.
 ### Azure DevOps integration
 - An **Integrations** tab connects to Azure DevOps using a **Personal Access Token**,
   stored securely in the **OS keyring** (never in the app database or settings file).
-- Any **active pull request where you are a reviewer** becomes a task — **required**
-  reviews at **High** priority, **optional** ones at **Medium**.
+- Choose which pull requests become tasks — enable **PRs you review**, **PRs you
+  created**, or both. Each source has its own **Sync now** button.
+- **Configurable priorities**: pick the priority for **required** and **optional**
+  reviewer PRs, and a separate priority for **your own** PRs. The reviewer priority
+  selectors appear only when the reviewer source is enabled; the author priority selector
+  appears only when the author source is enabled.
 - **Exactly one task per PR** — never duplicated on re-sync, and never re-created even
-  if you delete the task (the PR link persists).
-- When a PR is **merged, abandoned, or you're dropped as a reviewer**, its task is
-  **auto-completed** on the next sync.
-- Runs on demand via **Sync now** and on a **configurable background auto-poll**, all
-  off the UI thread so the app never freezes.
+  if you delete the task (the PR link persists). Each source is tracked independently.
+- When a PR is **merged, abandoned, or you're dropped/no longer involved**, its task is
+  **auto-completed** on the next sync of that source.
+- Runs on demand via each **Sync now** button and on a **configurable background
+  auto-poll**, all off the UI thread so the app never freezes.
 
 ### Packaging & distribution
 - Builds to a **single-file Windows executable** with PyInstaller (windowed, app icon
@@ -95,7 +101,8 @@ services/
 tests/
   test_task_logic.py          # task logic-layer tests (in-memory DB)
   test_schedule_logic.py      # recurrence + schedule persistence tests
-  test_integration_logic.py   # PR dedup / auto-complete / parsing tests
+  test_integration_logic.py   # PR dedup / auto-complete / parsing / source + priority tests
+  test_export_logic.py        # per-day JSON export scoping + serialization tests
 assets/                       # app icons (png + multi-res ico)
 task_manager.spec             # PyInstaller build spec
 .github/workflows/release.yml # CI: run tests, build exe, publish release on version tags
@@ -133,8 +140,11 @@ When run from source, the database lives at `data\tasks.db` next to the project.
 2. Open the **Integrations** tab in the app.
 3. Enter your **organization** (e.g. `myorg` or `https://dev.azure.com/myorg`), an
    optional **project**, and paste the **token**, then **Save**.
-4. Click **Test connection** to verify and auto-detect your reviewer identity, then
-   **Sync now** — or leave the background auto-poll to keep tasks up to date.
+4. Click **Test connection** to verify and auto-detect your identity.
+5. Enable a PR source — **Create tasks for PRs I review** and/or **Create tasks for PRs I
+   created** — and choose the priority for each, then **Save**.
+6. Click the matching **Sync now** button (**Sync review PRs** / **Sync my PRs**), or
+   leave the background auto-poll to keep tasks up to date.
 
 The token is written only to your OS keyring. **Remove integration** deletes the
 token and all Azure settings and forgets which PRs were synced (existing tasks are
@@ -147,7 +157,7 @@ pytest
 ```
 
 The logic tests use an in-memory SQLite database and require no display, so they run
-headless and in CI (currently **34 tests**).
+headless and in CI (currently **43 tests**).
 
 ## Building the executable
 

@@ -9,7 +9,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from controllers.task_controller import TaskController  # noqa: E402
-from models.integration import PullRequest, pr_key, pr_to_task_fields  # noqa: E402
+from models.integration import (  # noqa: E402
+    AzureConfig,
+    PullRequest,
+    pr_key,
+    pr_to_task_fields,
+)
 from models.task import Priority  # noqa: E402
 from models.task_repository import TaskRepository  # noqa: E402
 from services.azure_client import AzureDevOpsClient  # noqa: E402
@@ -87,11 +92,17 @@ def test_pr_link_round_trip():
     try:
         repo.link_pr(pr_key(ORG, 7), 42)
         assert repo.get_pr_link(pr_key(ORG, 7)) == 42
-        assert repo.list_pr_links() == {f"{ORG}:7": 42}
+        # Keys are namespaced by source; "review" is the default.
+        assert repo.list_pr_links() == {f"review:{ORG}:7": 42}
         repo.delete_pr_link(pr_key(ORG, 7))
         assert repo.get_pr_link(pr_key(ORG, 7)) is None
     finally:
         repo.close()
+
+
+def test_pr_key_namespaces_by_source():
+    assert pr_key(ORG, 7) == "review:myorg:7"
+    assert pr_key(ORG, 7, "author") == "author:myorg:7"
 
 
 def test_pr_to_task_fields_mapping():
@@ -147,3 +158,62 @@ def test_optional_reviewer_task_is_medium_priority():
     )
     assert fields["priority"] is Priority.MEDIUM
     assert "optional" in fields["description"]
+
+
+def test_authored_pr_mapping():
+    fields = pr_to_task_fields(
+        PullRequest(pr_id=12, title="My work", is_author=True)
+    )
+    assert fields["title"] == "Your PR #12: My work"
+    assert fields["priority"] is Priority.MEDIUM  # default author priority
+    assert "author" in fields["description"].lower()
+
+
+def test_configurable_priorities():
+    cfg = AzureConfig(
+        priority_required=Priority.URGENT,
+        priority_optional=Priority.LOW,
+        priority_author=Priority.HIGH,
+    )
+    required = pr_to_task_fields(PullRequest(pr_id=1, title="r", is_required=True), cfg)
+    optional = pr_to_task_fields(PullRequest(pr_id=2, title="o", is_required=False), cfg)
+    author = pr_to_task_fields(PullRequest(pr_id=3, title="a", is_author=True), cfg)
+    assert required["priority"] is Priority.URGENT
+    assert optional["priority"] is Priority.LOW
+    assert author["priority"] is Priority.HIGH
+
+
+# ---- source isolation ----------------------------------------------------
+def test_sources_do_not_cross_autocomplete(controller):
+    # A review PR and an authored PR both become tasks.
+    review_pr = PullRequest(pr_id=1, title="Review me", is_required=True)
+    author_pr = PullRequest(pr_id=2, title="My PR", is_author=True)
+    controller.sync_pull_requests([review_pr], ORG, source="review")
+    controller.sync_pull_requests([author_pr], ORG, source="author")
+    assert len(controller.list_tasks()) == 2
+
+    # Re-syncing only the review source (author PR absent from THIS list) must not
+    # auto-complete the authored PR's task — it belongs to a different source.
+    summary = controller.sync_pull_requests([review_pr], ORG, source="review")
+    assert summary == {"created": 0, "skipped": 1, "completed": 0}
+    by_title = {t.title: t for t in controller.list_tasks()}
+    assert by_title["Your PR #2: My PR"].completed is False
+
+
+def test_parse_created_prs_marks_author():
+    payload = {
+        "value": [
+            {
+                "pullRequestId": 201,
+                "title": "Mine",
+                "status": "active",
+                "repository": {"name": "web", "project": {"name": "Store"}},
+                "createdBy": {"displayName": "Me"},
+            }
+        ]
+    }
+    prs = AzureDevOpsClient._parse_created_prs(payload)
+    assert len(prs) == 1
+    assert prs[0].pr_id == 201
+    assert prs[0].is_author is True
+    assert prs[0].is_required is False

@@ -7,6 +7,8 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDateEdit,
+    QDialog,
+    QDialogButtonBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -79,11 +81,13 @@ class MainWindow(QMainWindow):
         self._delete_btn = QPushButton("Delete")
         self._complete_btn = QPushButton("Toggle Complete")
         self._undo_btn = QPushButton("Undo")
+        self._export_btn = QPushButton("Export day…")
         self._add_btn.clicked.connect(self._on_add)
         self._edit_btn.clicked.connect(self._on_edit)
         self._delete_btn.clicked.connect(self._on_delete)
         self._complete_btn.clicked.connect(self._on_toggle_complete)
         self._undo_btn.clicked.connect(self._on_undo)
+        self._export_btn.clicked.connect(self._on_export_day)
 
         self._dark_btn = QPushButton("☀ Light" if self._dark else "🌙 Dark")
         self._dark_btn.setCheckable(True)
@@ -102,6 +106,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._delete_btn)
         toolbar.addWidget(self._complete_btn)
         toolbar.addWidget(self._undo_btn)
+        toolbar.addWidget(self._export_btn)
         toolbar.addStretch(1)
         toolbar.addWidget(self._dark_btn)
         toolbar.addWidget(QLabel("Sort by:"))
@@ -436,11 +441,60 @@ class MainWindow(QMainWindow):
         self.refresh()
         self._status.setText(f"Undid {label}.")
 
+    # ---- export ----------------------------------------------------------
+    def _on_export_day(self) -> None:
+        """Pick a date, then copy that day's tasks as JSON to the clipboard."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Export tasks for a day")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Copy the selected day's tasks to the clipboard as JSON."))
+
+        picker_row = QHBoxLayout()
+        picker_row.addWidget(QLabel("Date:"))
+        picker = QDateEdit()
+        picker.setCalendarPopup(True)
+        picker.setDisplayFormat("ddd, yyyy-MM-dd")
+        picker.setDate(self._day.date())
+        picker_row.addWidget(picker)
+        picker_row.addStretch(1)
+        layout.addLayout(picker_row)
+
+        buttons = QDialogButtonBox()
+        export_btn = buttons.addButton("Export", QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        export_btn.setDefault(True)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        iso_date = picker.date().toString("yyyy-MM-dd")
+        payload = self._controller.export_day_json(iso_date)
+        count = len(self._controller.tasks_for_day(iso_date))
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(payload)
+        self._status.setText(f"Copied {count} task(s) for {iso_date} to the clipboard.")
+        QMessageBox.information(
+            self,
+            "Export complete",
+            f"Copied {count} task(s) for {iso_date} to the clipboard as JSON.",
+        )
+
     # ---- Azure integration ----------------------------------------------
-    def _on_prs_fetched(self, prs: list, organization: str) -> None:
-        """A background sync returned PRs; reconcile them and refresh the list."""
-        summary = self._controller.sync_pull_requests(prs, organization)
-        self._integration_tab.report_sync_result(summary)
+    def _on_prs_fetched(self, results: dict, organization: str) -> None:
+        """A background sync returned PRs per source; reconcile and refresh."""
+        cfg = self._integration_tab.current_config()
+        totals = {"created": 0, "skipped": 0, "completed": 0}
+        for source, prs in results.items():
+            summary = self._controller.sync_pull_requests(
+                prs, organization, source=source, config=cfg
+            )
+            for key in totals:
+                totals[key] += summary[key]
+        self._integration_tab.report_sync_result(totals)
         self._start_poll_timer()  # pick up any interval/enabled change
         self.refresh()
 
@@ -456,7 +510,7 @@ class MainWindow(QMainWindow):
     def _start_poll_timer(self) -> None:
         """(Re)start the auto-poll timer from the saved config, or stop it."""
         cfg = self._integration_tab.current_config()
-        if cfg.is_configured():
+        if cfg.has_active_sources():
             self._poll_timer.start(max(1, cfg.poll_minutes) * 60_000)
         else:
             self._poll_timer.stop()
