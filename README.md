@@ -36,7 +36,7 @@ schedules, and auto-generate tasks from your Azure DevOps pull requests and Line
 - One-off tasks stay visible regardless of the selected day.
 
 ### Azure DevOps integration
-- An **Integrations** tab connects to Azure DevOps using a **Personal Access Token**,
+- An **Azure** tab connects to Azure DevOps using a **Personal Access Token**,
   stored securely in the **OS keyring** (never in the app database or settings file).
 - Choose which pull requests become tasks — enable **PRs you review**, **PRs you
   created**, or both. Each source has its own **Sync now** button.
@@ -176,7 +176,7 @@ When run from source, the database lives at `data\tasks.db` next to the project.
 ## Setting up the Azure integration
 
 1. In Azure DevOps, create a **Personal Access Token** with **Code → Read** scope.
-2. Open the **Integrations** tab in the app.
+2. Open the **Azure** tab in the app.
 3. Enter your **organization** (e.g. `myorg` or `https://dev.azure.com/myorg`), an
    optional **project**, and paste the **token**, then **Save**.
 4. Click **Test connection** to verify and auto-detect your identity.

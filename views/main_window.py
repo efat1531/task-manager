@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QTableWidgetItem,
     QTabWidget,
@@ -81,36 +82,57 @@ class MainWindow(QMainWindow):
         self._integration_tab = IntegrationTab()
         self._integration_tab.prs_fetched.connect(self._on_prs_fetched)
         self._integration_tab.cleared.connect(self._on_integration_cleared)
-        self._tabs.addTab(self._integration_tab, "Integrations")
+        self._integration_tab.busy_changed.connect(
+            lambda busy, label: self._on_integration_busy("azure", busy, label)
+        )
+        self._tabs.addTab(self._integration_tab, "Azure")
 
         self._linear_tab = LinearIntegrationTab()
         self._linear_tab.issues_fetched.connect(self._on_linear_issues_fetched)
         self._linear_tab.cleared.connect(self._on_linear_cleared)
+        self._linear_tab.busy_changed.connect(
+            lambda busy, label: self._on_integration_busy("linear", busy, label)
+        )
         self._tabs.addTab(self._linear_tab, "Linear")
 
         self.setCentralWidget(self._tabs)
 
-        # Footer: a permanent status-bar label counting down to the next Azure
-        # auto-sync. Shown only while Azure has active sources (see
-        # _update_sync_countdown); hidden otherwise.
+        # Footer busy indicator: an animated bar + label shown whenever any
+        # integration worker is running. Kept left of the countdown by adding it
+        # first. _busy_ops tracks the per-integration operation labels so
+        # concurrent Azure + Linear auto-syncs both show.
+        self._busy_ops: dict[str, str] = {}
+        self._busy_label = QLabel()
+        self._busy_label.hide()
+        self._busy_bar = QProgressBar()
+        self._busy_bar.setRange(0, 0)  # indeterminate
+        self._busy_bar.setFixedWidth(90)
+        self._busy_bar.setTextVisible(False)
+        self._busy_bar.hide()
+        self.statusBar().addPermanentWidget(self._busy_label)
+        self.statusBar().addPermanentWidget(self._busy_bar)
+
+        # Footer: a permanent status-bar label counting down to the next Azure /
+        # Linear auto-sync. Each side shows only while that integration has active
+        # sources (see _update_sync_countdown); hidden otherwise.
         self._sync_countdown = QLabel()
         self.statusBar().addPermanentWidget(self._sync_countdown)
 
-        # Background auto-poll for the Azure integration.
+        # Background auto-poll timers for the Azure + Linear integrations. Both
+        # timer objects are created before either is started so the countdown
+        # (which reads both) is safe from the first _start_*_poll_timer() call on.
         self._poll_timer = QTimer(self)
         self._poll_timer.timeout.connect(self._auto_sync)
+        self._linear_poll_timer = QTimer(self)
+        self._linear_poll_timer.timeout.connect(self._auto_sync_linear)
         self._start_poll_timer()
+        self._start_linear_poll_timer()
 
-        # Ticks once a second to refresh the countdown label from the poll timer.
+        # Ticks once a second to refresh the countdown label from the poll timers.
         self._countdown_timer = QTimer(self)
         self._countdown_timer.timeout.connect(self._update_sync_countdown)
         self._countdown_timer.start(1000)
         self._update_sync_countdown()
-
-        # Background auto-poll for the Linear integration.
-        self._linear_poll_timer = QTimer(self)
-        self._linear_poll_timer.timeout.connect(self._auto_sync_linear)
-        self._start_linear_poll_timer()
 
     def _build_menu(self) -> None:
         """Menu bar: a Data menu for maintenance and a Help menu."""
@@ -682,23 +704,51 @@ class MainWindow(QMainWindow):
             self._poll_timer.stop()
         self._update_sync_countdown()
 
+    # ---- footer busy indicator ------------------------------------------
+    def _on_integration_busy(self, source: str, busy: bool, label: str) -> None:
+        """Track an integration's in-flight network op and refresh the footer."""
+        if busy:
+            self._busy_ops[source] = label
+        else:
+            self._busy_ops.pop(source, None)
+        self._refresh_busy_indicator()
+
+    def _refresh_busy_indicator(self) -> None:
+        """Show the animated footer bar while any integration worker is active."""
+        if self._busy_ops:
+            self._busy_label.setText("⟳ " + " · ".join(self._busy_ops.values()))
+            self._busy_label.show()
+            self._busy_bar.show()
+        else:
+            self._busy_label.clear()
+            self._busy_label.hide()
+            self._busy_bar.hide()
+
     @staticmethod
-    def _format_countdown(remaining_ms: int) -> str:
-        """``"Next Azure sync in mm:ss"`` for a millisecond remaining time."""
+    def _format_countdown(remaining_ms: int, name: str) -> str:
+        """``"Next <name> sync in mm:ss"`` for a millisecond remaining time."""
         total_seconds = max(0, remaining_ms) // 1000
-        return f"Next Azure sync in {total_seconds // 60:02d}:{total_seconds % 60:02d}"
+        return f"Next {name} sync in {total_seconds // 60:02d}:{total_seconds % 60:02d}"
 
     def _update_sync_countdown(self) -> None:
-        """Refresh the footer countdown to the next Azure auto-sync.
+        """Refresh the footer countdown to the next Azure / Linear auto-sync.
 
-        Visible only while Azure has active sources and the poll timer is
-        running; hidden otherwise so it never lingers when Azure is off.
+        Each side is shown only while that integration has active sources and its
+        poll timer is running; the label hides entirely when neither is active.
         """
-        active = self._integration_tab.current_config().has_active_sources()
-        if active and self._poll_timer.isActive():
-            self._sync_countdown.setText(
-                self._format_countdown(self._poll_timer.remainingTime())
+        parts = []
+        if (self._integration_tab.current_config().has_active_sources()
+                and self._poll_timer.isActive()):
+            parts.append(
+                self._format_countdown(self._poll_timer.remainingTime(), "Azure")
             )
+        if (self._linear_tab.current_config().has_active_sources()
+                and self._linear_poll_timer.isActive()):
+            parts.append(
+                self._format_countdown(self._linear_poll_timer.remainingTime(), "Linear")
+            )
+        if parts:
+            self._sync_countdown.setText(" · ".join(parts))
             self._sync_countdown.show()
         else:
             self._sync_countdown.clear()
@@ -711,6 +761,7 @@ class MainWindow(QMainWindow):
         summary = self._controller.sync_linear_issues(issues, cfg)
         self._linear_tab.report_sync_result(summary)
         self._start_linear_poll_timer()  # pick up any interval/enabled change
+        self._update_sync_countdown()
         self.refresh()
 
     def _auto_sync_linear(self) -> None:
@@ -720,6 +771,7 @@ class MainWindow(QMainWindow):
         """The integration was removed: forget Linear links and stop polling."""
         self._controller.clear_linear_links()
         self._linear_poll_timer.stop()
+        self._update_sync_countdown()
         self.refresh()
 
     def _start_linear_poll_timer(self) -> None:
@@ -729,6 +781,7 @@ class MainWindow(QMainWindow):
             self._linear_poll_timer.start(max(1, cfg.poll_minutes) * 60_000)
         else:
             self._linear_poll_timer.stop()
+        self._update_sync_countdown()
 
     # ---- theme -----------------------------------------------------------
     def _apply_theme(self) -> None:
