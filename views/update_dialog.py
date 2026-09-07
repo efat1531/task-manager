@@ -249,22 +249,24 @@ class UpdateManager(QObject):
         self._start_download(info)
 
     def _start_download(self, info: UpdateInfo) -> None:
-        progress = QProgressDialog("Downloading update…", "Cancel", 0, 100,
-                                   self._parent)
+        # Start indeterminate ("Connecting…"): the first bytes only arrive after
+        # DNS + TLS + GitHub's CDN redirect, so a determinate bar would sit frozen
+        # at 0% during setup. Flip to a real percentage on the first progress tick.
+        progress = QProgressDialog("Connecting…", "Cancel", 0, 0, self._parent)
         progress.setWindowTitle("Updating")
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
         progress.setAutoClose(False)
         progress.setAutoReset(False)
-        progress.setValue(0)
         self._progress = progress
+        self._download_began = False
 
         self._thread = QThread(self)
         worker = _DownloadWorker(info)
         self._worker = worker
         worker.moveToThread(self._thread)
         self._thread.started.connect(worker.run)
-        worker.progress.connect(progress.setValue)
+        worker.progress.connect(self._on_download_progress)
         worker.ready.connect(self._on_download_ready)
         worker.failed.connect(self._on_download_failed)
         worker.finished.connect(self._cleanup)
@@ -273,6 +275,17 @@ class UpdateManager(QObject):
         progress.canceled.connect(self._on_cancel)
         self._cancelled = False
         self._thread.start()
+
+    def _on_download_progress(self, pct: int) -> None:
+        """First tick flips the dialog from 'Connecting…' to a real percentage."""
+        progress = getattr(self, "_progress", None)
+        if progress is None:
+            return
+        if not self._download_began:
+            self._download_began = True
+            progress.setRange(0, 100)
+            progress.setLabelText("Downloading update…")
+        progress.setValue(pct)
 
     def _on_cancel(self) -> None:
         self._cancelled = True
