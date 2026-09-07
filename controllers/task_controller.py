@@ -247,10 +247,14 @@ class TaskController:
           task was since edited or deleted.
         - A previously-linked PR that is *absent* from ``prs`` (merged, abandoned,
           or the user was dropped) has its task completed.
+        - For the "review" source, the task also tracks the user's own review:
+          once they cast any vote the task is completed, and if the vote is later
+          reset to 0 (e.g. a new commit reset approvals) the task is reopened.
 
         Reconciliation is scoped to ``source`` ("review" | "author"): only links
         belonging to that source are considered, so syncing one source never
-        auto-completes the other's tasks.
+        auto-completes the other's tasks. The returned summary counts
+        ``created`` / ``skipped`` / ``completed`` / ``reopened``.
         """
         prefix = f"{source}:"
         existing = {
@@ -259,7 +263,7 @@ class TaskController:
             if key.startswith(prefix)
         }
         current_keys = set()
-        created = skipped = completed = 0
+        created = skipped = completed = reopened = 0
 
         for pr in prs:
             key = pr_key(organization, pr.pr_id, source)
@@ -280,6 +284,18 @@ class TaskController:
                 self._repo.set_unresolved_comments(
                     task_id, pr.unresolved_comment_count
                 )
+            # Mirror my review state onto review-source tasks: casting any vote
+            # completes the task; a vote reset back to 0 (e.g. a new commit reset
+            # approvals) reopens it so the PR gets another look.
+            elif source == "review":
+                task = self._repo.get(task_id)
+                if task is not None:
+                    if pr.review_completed and not task.completed:
+                        self._repo.set_completed(task_id, True)
+                        completed += 1
+                    elif not pr.review_completed and task.completed:
+                        self._repo.set_completed(task_id, False)
+                        reopened += 1
 
         # Auto-complete tasks for PRs of this source that are no longer open.
         for key, task_id in existing.items():
@@ -290,7 +306,12 @@ class TaskController:
                 self._repo.set_completed(task_id, True)
                 completed += 1
 
-        return {"created": created, "skipped": skipped, "completed": completed}
+        return {
+            "created": created,
+            "skipped": skipped,
+            "completed": completed,
+            "reopened": reopened,
+        }
 
     def clear_pr_links(self) -> None:
         """Forget which PRs have been synced. Tasks already created are kept, but

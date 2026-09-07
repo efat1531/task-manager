@@ -559,7 +559,7 @@ class MainWindow(QMainWindow):
     def _on_prs_fetched(self, results: dict, organization: str) -> None:
         """A background sync returned PRs per source; reconcile and refresh."""
         cfg = self._integration_tab.current_config()
-        totals = {"created": 0, "skipped": 0, "completed": 0}
+        totals = {"created": 0, "skipped": 0, "completed": 0, "reopened": 0}
         for source, prs in results.items():
             summary = self._controller.sync_pull_requests(
                 prs, organization, source=source, config=cfg

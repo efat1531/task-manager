@@ -200,7 +200,9 @@ class IntegrationTab(QWidget):
             "For <b>PRs you review</b>, required and optional reviews can each get their "
             "own priority; for <b>PRs you created</b>, pick a single priority. Each PR "
             "creates a task only once. When a PR is merged, abandoned, or you are no "
-            "longer involved, its task is marked complete on the next sync."
+            "longer involved, its task is marked complete on the next sync. A review "
+            "task is also completed once you cast your vote, and reopens if a new "
+            "commit resets your vote."
         )
         help_text.setWordWrap(True)
         help_text.setEnabled(False)
@@ -389,10 +391,14 @@ class IntegrationTab(QWidget):
         from datetime import datetime
 
         stamp = datetime.now().strftime("%H:%M")
-        self._status.setText(
-            f"Synced {stamp} · {summary['created']} created, "
-            f"{summary['completed']} completed, {summary['skipped']} unchanged."
-        )
+        parts = [
+            f"{summary['created']} created",
+            f"{summary['completed']} completed",
+        ]
+        if summary.get("reopened"):
+            parts.append(f"{summary['reopened']} reopened")
+        parts.append(f"{summary['skipped']} unchanged")
+        self._status.setText(f"Synced {stamp} · " + ", ".join(parts) + ".")
         self.sync_completed.emit(summary)
 
     def _cleanup_worker(self) -> None:
