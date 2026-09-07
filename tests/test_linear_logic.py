@@ -71,7 +71,8 @@ def test_issue_to_task_fields():
     assert fields["priority"] == Priority.HIGH
     assert fields["category"] == "Linear"
     assert fields["deadline"] is None
-    assert "https://linear.app/i/i1" in fields["description"]
+    # The full ticket link must be present, labelled, and copy-pasteable.
+    assert "Link: https://linear.app/i/i1" in fields["description"]
 
 
 def test_filter_excluded_drops_issues_carrying_any_excluded_label():

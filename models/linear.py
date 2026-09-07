@@ -100,8 +100,10 @@ def issue_to_task_fields(issue: LinearIssue, priority: Priority) -> dict:
     lines = [f"Linear issue {issue.identifier}".strip()]
     if issue.state_name:
         lines.append(f"Status: {issue.state_name}")
+    # Always surface the full ticket link on its own labelled line so it is easy
+    # to copy-paste out of the task description.
     if issue.url:
-        lines.append(issue.url)
+        lines.append(f"Link: {issue.url}")
     return {
         "title": title,
         "description": "\n".join(line for line in lines if line),
