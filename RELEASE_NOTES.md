@@ -1,33 +1,28 @@
-# Task Manager v1.4.0
+# Task Manager v1.4.1
 
-A **Reset** option to wipe the database and a set of Azure PR improvements:
-PR tasks now always get a clickable link, name their repository in the title,
-and existing tasks are backfilled with their link on the next sync.
+Task Manager now ships a proper **Windows installer**, so it installs like a
+normal app — with Start Menu and Desktop shortcuts and an entry in Add/Remove
+Programs — instead of running as a loose portable file.
 
 ## ✨ New features
 
-- **Reset all data.** A new **Data → Reset (clear all data)…** menu entry wipes
-  every task, schedule, recurring override, and synced integration link, and
-  resets id counters. It is guarded by a confirmation dialog and cannot be
-  undone.
-- **Repository name in PR titles.** Azure PR tasks now read
-  *"Your Contoso PR #123: …"* / *"Review Contoso PR #123: …"* so PRs from
-  different repositories are distinguishable at a glance.
-
-## 🐛 Bug fixes
-
-- **Azure PR tasks always get a clickable link.** Azure's pull-request list
-  endpoint often omits the PR's web URL, so some PR tasks had no `↗` link in
-  their row (unlike Linear tasks). The link is now reconstructed from the
-  organization, project, repository, and PR id when the API leaves it out.
-- **Existing PR tasks are backfilled.** Tasks created before the link fix gain
-  their `↗` link automatically on the next sync — the link is only added when a
-  task has none, so any description you have edited is left untouched.
+- **Windows installer.** Download **`TaskManager-Setup.exe`** to install Task
+  Manager per-user (no admin prompt). It adds Start Menu and Desktop shortcuts
+  and registers an uninstaller under Settings → Apps. In-app updates keep working
+  exactly as before — the app still updates and relaunches itself.
 
 ## 📦 Install
 
-Download `TaskManager.exe` below (Windows). The build is produced and tested in
-CI for this tag. If you're already on v1.3.0 or later, this update can be
-installed from within the app (**Help → Check for updates…**).
+- **Recommended:** download **`TaskManager-Setup.exe`** below and run it. It
+  installs to your user profile (no administrator rights needed), creates
+  shortcuts, and can be removed later from **Settings → Apps**.
+- **Portable:** the standalone **`TaskManager.exe`** is still available if you
+  prefer to run it without installing.
+
+If you're already on v1.4.0 or later, this update can also be installed from
+within the app (**Help → Check for updates…**).
+
+> Note: the installer and app are not code-signed yet, so Windows SmartScreen may
+> show a warning on first run — choose **More info → Run anyway**.
 
 **Full changelog** is appended below.
