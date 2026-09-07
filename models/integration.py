@@ -20,6 +20,13 @@ class AzureConfig:
     project: str = ""               # optional; "" means all projects in the org
     reviewer_id: str = ""           # cached identity GUID
     poll_minutes: int = 15
+    # Which pull requests become tasks. Both default off — a user opts in per source.
+    create_for_reviewer: bool = False   # PRs where you are a reviewer
+    create_for_author: bool = False     # PRs you created
+    # Priority assigned to each PR task source.
+    priority_required: Priority = Priority.HIGH
+    priority_optional: Priority = Priority.MEDIUM
+    priority_author: Priority = Priority.MEDIUM
 
     @property
     def org_slug(self) -> str:
@@ -38,6 +45,20 @@ class AzureConfig:
     def is_configured(self) -> bool:
         return bool(self.enabled and self.org_slug)
 
+    @property
+    def enabled_sources(self) -> list[str]:
+        """The PR sources the user has switched on, as ``"review"`` / ``"author"``."""
+        sources: list[str] = []
+        if self.create_for_reviewer:
+            sources.append("review")
+        if self.create_for_author:
+            sources.append("author")
+        return sources
+
+    def has_active_sources(self) -> bool:
+        """True when configured and at least one PR source is enabled."""
+        return self.is_configured() and bool(self.enabled_sources)
+
 
 @dataclass
 class PullRequest:
@@ -50,21 +71,40 @@ class PullRequest:
     url: str = ""
     status: str = "active"          # active | completed | abandoned
     is_required: bool = False       # is the current user a *required* reviewer?
+    is_author: bool = False         # did the current user create this PR?
 
 
-def pr_key(organization: str, pr_id: int) -> str:
-    """Stable dedup key. PR ids are unique within an organization."""
-    return f"{organization}:{pr_id}"
+def pr_key(organization: str, pr_id: int, source: str = "review") -> str:
+    """Stable dedup key. PR ids are unique within an organization; the ``source``
+    prefix ("review" | "author") keeps each task source isolated so syncing one
+    never auto-completes the other's tasks."""
+    return f"{source}:{organization}:{pr_id}"
 
 
-def pr_to_task_fields(pr: PullRequest) -> dict:
+def pr_to_task_fields(pr: PullRequest, config: "AzureConfig | None" = None) -> dict:
     """Map a pull request onto the fields used to create its task.
 
-    Required reviews are High priority; optional reviews are Medium. The reviewer
-    role is also noted in the description.
+    Priority is taken from ``config`` (falling back to the defaults, i.e. required
+    reviews High / optional Medium / authored Medium). The PR role is noted in the
+    description.
     """
-    role = "required" if pr.is_required else "optional"
-    lines = [f"Pull request #{pr.pr_id}", f"Your review: {role}"]
+    if config is None:
+        config = AzureConfig()
+    if pr.is_author:
+        role = "author"
+        priority = config.priority_author
+        title = f"Your PR #{pr.pr_id}: {pr.title}"
+    elif pr.is_required:
+        role = "required"
+        priority = config.priority_required
+        title = f"Review PR #{pr.pr_id}: {pr.title}"
+    else:
+        role = "optional"
+        priority = config.priority_optional
+        title = f"Review PR #{pr.pr_id}: {pr.title}"
+
+    role_line = "You are the author" if pr.is_author else f"Your review: {role}"
+    lines = [f"Pull request #{pr.pr_id}", role_line]
     if pr.repository:
         repo = f"{pr.project}/{pr.repository}" if pr.project else pr.repository
         lines.append(f"Repository: {repo}")
@@ -73,9 +113,9 @@ def pr_to_task_fields(pr: PullRequest) -> dict:
     if pr.url:
         lines.append(pr.url)
     return {
-        "title": f"Review PR #{pr.pr_id}: {pr.title}",
+        "title": title,
         "description": "\n".join(lines),
-        "priority": Priority.HIGH if pr.is_required else Priority.MEDIUM,
+        "priority": priority,
         "category": "Azure PR",
         "deadline": None,
     }

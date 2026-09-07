@@ -2,7 +2,7 @@
 
 The actual network call runs on a worker thread (:class:`_SyncWorker`) so the UI
 never freezes. On success the worker hands the fetched pull requests back to the
-window via the ``synced`` signal; the window reconciles them through the
+window via the ``prs_fetched`` signal; the window reconciles them through the
 controller and refreshes the task list.
 """
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -23,26 +24,37 @@ from PySide6.QtWidgets import (
 )
 
 from models.integration import AzureConfig
+from models.task import Priority
 from services import credentials, integration_settings
 from services.azure_client import AzureDevOpsClient, AzureError
+
+
+def _priority_combo() -> QComboBox:
+    combo = QComboBox()
+    for p in (Priority.URGENT, Priority.HIGH, Priority.MEDIUM, Priority.LOW):
+        combo.addItem(p.label, p)
+    return combo
 
 
 class _SyncWorker(QObject):
     """Runs one Azure operation off the UI thread and reports back."""
 
-    #: (list[PullRequest], organization_slug) on a successful sync.
-    synced = Signal(list, str)
+    #: ({source: list[PullRequest]}, organization_slug) on a successful sync.
+    synced = Signal(dict, str)
     #: (ok, message) for a connection test.
     tested = Signal(bool, str)
     #: human-readable error string.
     failed = Signal(str)
     finished = Signal()
 
-    def __init__(self, config: AzureConfig, pat: str, mode: str) -> None:
+    def __init__(
+        self, config: AzureConfig, pat: str, mode: str, sources: list[str] | None = None
+    ) -> None:
         super().__init__()
         self._config = config
         self._pat = pat
         self._mode = mode  # "sync" | "test"
+        self._sources = sources or []
 
     def run(self) -> None:
         try:
@@ -53,9 +65,13 @@ class _SyncWorker(QObject):
                 ok, message = client.test_connection()
                 self.tested.emit(ok, message)
             else:
-                reviewer_id = self._config.reviewer_id or client.get_authenticated_user_id()
-                prs = client.list_review_requested_prs(reviewer_id)
-                self.synced.emit(prs, self._config.org_slug)
+                identity = self._config.reviewer_id or client.get_authenticated_user_id()
+                results: dict[str, list] = {}
+                if "review" in self._sources:
+                    results["review"] = client.list_review_requested_prs(identity)
+                if "author" in self._sources:
+                    results["author"] = client.list_created_prs(identity)
+                self.synced.emit(results, self._config.org_slug)
         except AzureError as exc:
             self.failed.emit(str(exc))
         except Exception as exc:  # pragma: no cover - defensive
@@ -69,8 +85,8 @@ class IntegrationTab(QWidget):
 
     #: Emitted with the reconcile summary dict after a successful sync.
     sync_completed = Signal(dict)
-    #: Emitted (list[PullRequest], org) so the window can run the controller sync.
-    prs_fetched = Signal(list, str)
+    #: Emitted ({source: list[PullRequest]}, org) so the window runs the controller sync.
+    prs_fetched = Signal(dict, str)
     #: Emitted after the integration is removed, so the window can forget PR links.
     cleared = Signal()
 
@@ -111,18 +127,49 @@ class IntegrationTab(QWidget):
 
         root.addWidget(box)
 
+        # ---- task-source configuration -----------------------------------
+        sources = QGroupBox("Create tasks from pull requests")
+        src_form = QFormLayout(sources)
+
+        # Reviewer source: enable + required/optional priorities.
+        self._cb_reviewer = QCheckBox("Create tasks for PRs I review")
+        self._cb_reviewer.toggled.connect(self._update_source_visibility)
+        src_form.addRow(self._cb_reviewer)
+
+        self._priority_required = _priority_combo()
+        self._required_label = QLabel("Required-reviewer priority")
+        src_form.addRow(self._required_label, self._priority_required)
+
+        self._priority_optional = _priority_combo()
+        self._optional_label = QLabel("Optional-reviewer priority")
+        src_form.addRow(self._optional_label, self._priority_optional)
+
+        # Author source: enable + priority.
+        self._cb_author = QCheckBox("Create tasks for PRs I created")
+        self._cb_author.toggled.connect(self._update_source_visibility)
+        src_form.addRow(self._cb_author)
+
+        self._priority_author = _priority_combo()
+        self._author_label = QLabel("My-PR priority")
+        src_form.addRow(self._author_label, self._priority_author)
+
+        root.addWidget(sources)
+
         buttons = QHBoxLayout()
         self._save_btn = QPushButton("Save")
         self._test_btn = QPushButton("Test connection")
-        self._sync_btn = QPushButton("Sync now")
+        self._sync_review_btn = QPushButton("Sync review PRs")
+        self._sync_author_btn = QPushButton("Sync my PRs")
         self._save_btn.clicked.connect(self._on_save)
         self._test_btn.clicked.connect(self._on_test)
-        self._sync_btn.clicked.connect(self.trigger_sync)
+        self._sync_review_btn.clicked.connect(lambda: self._sync_source("review"))
+        self._sync_author_btn.clicked.connect(lambda: self._sync_source("author"))
         self._remove_btn = QPushButton("Remove integration")
         self._remove_btn.clicked.connect(self._on_remove)
         buttons.addWidget(self._save_btn)
         buttons.addWidget(self._test_btn)
-        buttons.addWidget(self._sync_btn)
+        buttons.addWidget(self._sync_review_btn)
+        buttons.addWidget(self._sync_author_btn)
         buttons.addStretch(1)
         buttons.addWidget(self._remove_btn)
         root.addLayout(buttons)
@@ -132,15 +179,29 @@ class IntegrationTab(QWidget):
         root.addWidget(self._status)
 
         help_text = QLabel(
-            "Any active pull request where you are a reviewer becomes a task — "
-            "<b>required</b> reviews are High priority, <b>optional</b> ones Medium. "
-            "Each PR creates a task only once. When a PR is merged, abandoned, or you "
-            "are no longer a reviewer, its task is marked complete on the next sync."
+            "Choose which pull requests become tasks and at what priority. "
+            "For <b>PRs you review</b>, required and optional reviews can each get their "
+            "own priority; for <b>PRs you created</b>, pick a single priority. Each PR "
+            "creates a task only once. When a PR is merged, abandoned, or you are no "
+            "longer involved, its task is marked complete on the next sync."
         )
         help_text.setWordWrap(True)
         help_text.setEnabled(False)
         root.addWidget(help_text)
         root.addStretch(1)
+
+    def _update_source_visibility(self) -> None:
+        """Show each source's priority selectors and enable its Sync button only
+        when that source is switched on."""
+        reviewer_on = self._cb_reviewer.isChecked()
+        author_on = self._cb_author.isChecked()
+        for w in (self._required_label, self._priority_required,
+                  self._optional_label, self._priority_optional):
+            w.setVisible(reviewer_on)
+        for w in (self._author_label, self._priority_author):
+            w.setVisible(author_on)
+        self._sync_review_btn.setEnabled(reviewer_on)
+        self._sync_author_btn.setEnabled(author_on)
 
     # ---- config load/save ------------------------------------------------
     def _load(self) -> None:
@@ -149,9 +210,21 @@ class IntegrationTab(QWidget):
         self._org.setText(cfg.organization)
         self._project.setText(cfg.project)
         self._poll.setValue(cfg.poll_minutes)
+        self._cb_reviewer.setChecked(cfg.create_for_reviewer)
+        self._cb_author.setChecked(cfg.create_for_author)
+        self._set_priority(self._priority_required, cfg.priority_required)
+        self._set_priority(self._priority_optional, cfg.priority_optional)
+        self._set_priority(self._priority_author, cfg.priority_author)
+        self._update_source_visibility()
         if credentials.load_pat():
             self._pat.setPlaceholderText("•••••••• (saved — type to replace)")
         self._refresh_status(cfg)
+
+    @staticmethod
+    def _set_priority(combo: QComboBox, priority: Priority) -> None:
+        idx = combo.findData(priority)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
 
     def current_config(self) -> AzureConfig:
         """Config as currently shown in the form (reviewer_id kept from storage)."""
@@ -162,6 +235,11 @@ class IntegrationTab(QWidget):
             project=self._project.text().strip(),
             reviewer_id=stored.reviewer_id,
             poll_minutes=self._poll.value(),
+            create_for_reviewer=self._cb_reviewer.isChecked(),
+            create_for_author=self._cb_author.isChecked(),
+            priority_required=self._priority_required.currentData(),
+            priority_optional=self._priority_optional.currentData(),
+            priority_author=self._priority_author.currentData(),
         )
 
     def _on_save(self) -> None:
@@ -188,6 +266,11 @@ class IntegrationTab(QWidget):
             self._status.setText("Enter an organization to get started.")
         elif not credentials.load_pat():
             self._status.setText("Enter and save a Personal Access Token.")
+        elif not cfg.enabled_sources:
+            self._status.setText(
+                f"Ready — organization '{cfg.org_slug}'. Enable a PR source above to "
+                "create tasks."
+            )
         else:
             self._status.setText(f"Ready — organization '{cfg.org_slug}'.")
 
@@ -218,18 +301,29 @@ class IntegrationTab(QWidget):
         self._org.clear()
         self._project.clear()
         self._poll.setValue(defaults.poll_minutes)
+        self._cb_reviewer.setChecked(defaults.create_for_reviewer)
+        self._cb_author.setChecked(defaults.create_for_author)
+        self._set_priority(self._priority_required, defaults.priority_required)
+        self._set_priority(self._priority_optional, defaults.priority_optional)
+        self._set_priority(self._priority_author, defaults.priority_author)
+        self._update_source_visibility()
         self._pat.clear()
         self._pat.setPlaceholderText("Personal Access Token (Code → Read)")
         self._status.setText("Integration removed.")
 
-    def trigger_sync(self, *, auto: bool = False) -> None:
-        """Kick off a background sync. ``auto`` marks poll-driven runs (quieter)."""
-        cfg = self.current_config()
-        if auto and not cfg.is_configured():
-            return
-        self._start_worker("sync")
+    def _sync_source(self, source: str) -> None:
+        """Manual sync of a single source from its button."""
+        self._start_worker("sync", sources=[source])
 
-    def _start_worker(self, mode: str) -> None:
+    def trigger_sync(self, *, auto: bool = False) -> None:
+        """Kick off a background sync of every enabled source. ``auto`` marks
+        poll-driven runs (quieter — it no-ops when nothing is configured)."""
+        cfg = self.current_config()
+        if auto and not cfg.has_active_sources():
+            return
+        self._start_worker("sync", sources=cfg.enabled_sources)
+
+    def _start_worker(self, mode: str, sources: list[str] | None = None) -> None:
         if self._thread is not None:  # a run is already in flight
             return
         cfg = self.current_config()
@@ -240,12 +334,15 @@ class IntegrationTab(QWidget):
         if not pat:
             self._status.setText("Enter a Personal Access Token first.")
             return
+        if mode == "sync" and not sources:
+            self._status.setText("Enable a PR source above before syncing.")
+            return
 
         self._set_busy(True)
         self._status.setText("Testing…" if mode == "test" else "Syncing…")
 
         self._thread = QThread(self)
-        self._worker = _SyncWorker(cfg, pat, mode)
+        self._worker = _SyncWorker(cfg, pat, mode, sources)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.tested.connect(self._on_tested)
@@ -263,9 +360,9 @@ class IntegrationTab(QWidget):
             cfg.reviewer_id = reviewer_id
             integration_settings.save_config(cfg)
 
-    def _on_synced(self, prs: list, organization: str) -> None:
+    def _on_synced(self, results: dict, organization: str) -> None:
         # The window owns the controller; let it reconcile + refresh.
-        self.prs_fetched.emit(prs, organization)
+        self.prs_fetched.emit(results, organization)
 
     def _on_failed(self, message: str) -> None:
         self._status.setText(f"Error: {message}")
@@ -290,5 +387,11 @@ class IntegrationTab(QWidget):
         self._worker = None
 
     def _set_busy(self, busy: bool) -> None:
-        for btn in (self._test_btn, self._sync_btn, self._save_btn, self._remove_btn):
+        for btn in (self._test_btn, self._save_btn, self._remove_btn):
             btn.setEnabled(not busy)
+        # Sync buttons additionally depend on whether their source is enabled.
+        if busy:
+            self._sync_review_btn.setEnabled(False)
+            self._sync_author_btn.setEnabled(False)
+        else:
+            self._update_source_visibility()
