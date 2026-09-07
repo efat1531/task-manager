@@ -74,10 +74,22 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(self._tabs)
 
+        # Footer: a permanent status-bar label counting down to the next Azure
+        # auto-sync. Shown only while Azure has active sources (see
+        # _update_sync_countdown); hidden otherwise.
+        self._sync_countdown = QLabel()
+        self.statusBar().addPermanentWidget(self._sync_countdown)
+
         # Background auto-poll for the Azure integration.
         self._poll_timer = QTimer(self)
         self._poll_timer.timeout.connect(self._auto_sync)
         self._start_poll_timer()
+
+        # Ticks once a second to refresh the countdown label from the poll timer.
+        self._countdown_timer = QTimer(self)
+        self._countdown_timer.timeout.connect(self._update_sync_countdown)
+        self._countdown_timer.start(1000)
+        self._update_sync_countdown()
 
         # Background auto-poll for the Linear integration.
         self._linear_poll_timer = QTimer(self)
@@ -579,6 +591,7 @@ class MainWindow(QMainWindow):
                 totals[key] += summary[key]
         self._integration_tab.report_sync_result(totals)
         self._start_poll_timer()  # pick up any interval/enabled change
+        self._update_sync_countdown()
         self.refresh()
 
     def _auto_sync(self) -> None:
@@ -588,6 +601,7 @@ class MainWindow(QMainWindow):
         """The integration was removed: forget PR links and stop auto-polling."""
         self._controller.clear_pr_links()
         self._poll_timer.stop()
+        self._update_sync_countdown()
         self.refresh()
 
     def _start_poll_timer(self) -> None:
@@ -597,6 +611,29 @@ class MainWindow(QMainWindow):
             self._poll_timer.start(max(1, cfg.poll_minutes) * 60_000)
         else:
             self._poll_timer.stop()
+        self._update_sync_countdown()
+
+    @staticmethod
+    def _format_countdown(remaining_ms: int) -> str:
+        """``"Next Azure sync in mm:ss"`` for a millisecond remaining time."""
+        total_seconds = max(0, remaining_ms) // 1000
+        return f"Next Azure sync in {total_seconds // 60:02d}:{total_seconds % 60:02d}"
+
+    def _update_sync_countdown(self) -> None:
+        """Refresh the footer countdown to the next Azure auto-sync.
+
+        Visible only while Azure has active sources and the poll timer is
+        running; hidden otherwise so it never lingers when Azure is off.
+        """
+        active = self._integration_tab.current_config().has_active_sources()
+        if active and self._poll_timer.isActive():
+            self._sync_countdown.setText(
+                self._format_countdown(self._poll_timer.remainingTime())
+            )
+            self._sync_countdown.show()
+        else:
+            self._sync_countdown.clear()
+            self._sync_countdown.hide()
 
     # ---- Linear integration ---------------------------------------------
     def _on_linear_issues_fetched(self, issues: list) -> None:
