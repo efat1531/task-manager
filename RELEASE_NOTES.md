@@ -1,30 +1,33 @@
-# Task Manager v1.3.0
+# Task Manager v1.4.0
 
-In-app updates arrive: Task Manager can now check GitHub for a newer version and
-update itself. Plus a fix for overlapping titles in the task list.
+A **Reset** option to wipe the database and a set of Azure PR improvements:
+PR tasks now always get a clickable link, name their repository in the title,
+and existing tasks are backfilled with their link on the next sync.
 
 ## ✨ New features
 
-- **Built-in updater.** Task Manager now checks GitHub for a newer release in the
-  background on startup and offers to install it, showing the new version's
-  release notes first. You can also check any time from **Help → Check for
-  updates…**, and an **About** entry shows the current version. On the packaged
-  Windows app the update downloads and installs itself, then relaunches; elsewhere
-  it opens the releases page. After an update, a one-time "What's new" popup
-  summarises the changes.
+- **Reset all data.** A new **Data → Reset (clear all data)…** menu entry wipes
+  every task, schedule, recurring override, and synced integration link, and
+  resets id counters. It is guarded by a confirmation dialog and cannot be
+  undone.
+- **Repository name in PR titles.** Azure PR tasks now read
+  *"Your DenticonCore PR #59854: …"* / *"Review DenticonCore PR #59854: …"* so
+  PRs from different repositories are distinguishable at a glance.
 
 ## 🐛 Bug fixes
 
-- **Task titles no longer overlap in the list.** When a row switched to a linked
-  title (e.g. a PR or Linear task whose text contains a URL), the new title could
-  be painted on top of a stale one, so two titles appeared jumbled together — most
-  visible after enabling the Linear integration next to Azure PR tasks. Each task
-  now renders cleanly on its own row.
+- **Azure PR tasks always get a clickable link.** Azure's pull-request list
+  endpoint often omits the PR's web URL, so some PR tasks had no `↗` link in
+  their row (unlike Linear tasks). The link is now reconstructed from the
+  organization, project, repository, and PR id when the API leaves it out.
+- **Existing PR tasks are backfilled.** Tasks created before the link fix gain
+  their `↗` link automatically on the next sync — the link is only added when a
+  task has none, so any description you have edited is left untouched.
 
 ## 📦 Install
 
 Download `TaskManager.exe` below (Windows). The build is produced and tested in
-CI for this tag. Once you're on v1.3.0, future updates can be installed from
-within the app.
+CI for this tag. If you're already on v1.3.0 or later, this update can be
+installed from within the app (**Help → Check for updates…**).
 
 **Full changelog** is appended below.
