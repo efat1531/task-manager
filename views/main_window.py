@@ -29,7 +29,14 @@ from models import linkify
 from models.schedule import Occurrence
 from models.task import Task
 from services import notifier
-from version import APP_VERSION
+from version import (
+    APP_AUTHOR,
+    APP_CONTACT_EMAIL,
+    APP_COPYRIGHT,
+    APP_DESCRIPTION,
+    APP_VERSION,
+    GITHUB_REPO,
+)
 from views import theme
 from views.integration_tab import IntegrationTab
 from views.linear_tab import LinearIntegrationTab
@@ -138,11 +145,17 @@ class MainWindow(QMainWindow):
         self._updates.check_manual()
 
     def _on_about(self) -> None:
-        QMessageBox.about(
-            self,
-            "About Task Manager",
-            f"<b>Task Manager</b><br>Version {APP_VERSION}",
+        repo_url = html.escape(f"https://github.com/{GITHUB_REPO}", quote=True)
+        email = html.escape(APP_CONTACT_EMAIL, quote=True)
+        body = (
+            f"<b>Task Manager</b><br>Version {html.escape(APP_VERSION)}"
+            f"<br><br>{html.escape(APP_DESCRIPTION)}"
+            f"<br><br>By {html.escape(APP_AUTHOR)}"
+            f"<br>Contact: <a href=\"mailto:{email}\">{html.escape(APP_CONTACT_EMAIL)}</a>"
+            f"<br><a href=\"{repo_url}\">GitHub ↗</a>"
+            f"<br><br>{html.escape(APP_COPYRIGHT)}"
         )
+        QMessageBox.about(self, "About Task Manager", body)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
         # Let any in-flight update check/download thread finish before we go.

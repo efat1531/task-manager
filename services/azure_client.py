@@ -188,7 +188,8 @@ class AzureDevOpsClient:
     @staticmethod
     def _build_pr(
         item: dict, *, is_required: bool, is_author: bool,
-        reviewer_vote: int = 0, org_base: str = "",
+        reviewer_vote: int = 0, is_waiting_for_author: bool = False,
+        org_base: str = "",
     ) -> PullRequest:
         """Project one raw Azure PR item onto a :class:`PullRequest`.
 
@@ -221,6 +222,7 @@ class AzureDevOpsClient:
             is_required=is_required,
             is_author=is_author,
             reviewer_vote=reviewer_vote,
+            is_waiting_for_author=is_waiting_for_author,
         )
 
     @classmethod
@@ -261,8 +263,21 @@ class AzureDevOpsClient:
         cls, payload: dict, org_base: str = ""
     ) -> List[PullRequest]:
         """Build PullRequests for every authored PR in the payload (``is_author``
-        set). Pure: no network, safe to unit-test."""
-        return [
-            cls._build_pr(item, is_required=False, is_author=True, org_base=org_base)
-            for item in payload.get("value", [])
-        ]
+        set). An authored PR is "waiting for author" when any reviewer cast the
+        -5 vote. Pure: no network, safe to unit-test."""
+        result: List[PullRequest] = []
+        for item in payload.get("value", []):
+            waiting = any(
+                int(r.get("vote", 0) or 0) == -5
+                for r in item.get("reviewers", [])
+            )
+            result.append(
+                cls._build_pr(
+                    item,
+                    is_required=False,
+                    is_author=True,
+                    is_waiting_for_author=waiting,
+                    org_base=org_base,
+                )
+            )
+        return result

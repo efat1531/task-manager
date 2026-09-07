@@ -3,8 +3,9 @@
 The network calls run on a worker thread (:class:`_LinearWorker`) so the UI never
 freezes. Configuration is progressive: enter an API key, load the teams, then load
 each team's workflow statuses and labels. For every status you can choose whether
-it creates tasks and at what priority; any label you tick excludes issues that
-carry it. On a successful sync the worker hands the fetched issues back to the
+it creates tasks; the task's priority comes from the Linear ticket itself. Any
+label you tick excludes issues that carry it. On a successful sync the worker
+hands the fetched issues back to the
 window via the ``issues_fetched`` signal; the window reconciles them through the
 controller and refreshes the task list.
 """
@@ -13,7 +14,6 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -30,16 +30,8 @@ from PySide6.QtWidgets import (
 )
 
 from models.linear import LinearConfig
-from models.task import Priority
 from services import credentials, linear_settings
 from services.linear_client import LinearClient, LinearError
-
-
-def _priority_combo() -> QComboBox:
-    combo = QComboBox()
-    for p in (Priority.URGENT, Priority.HIGH, Priority.MEDIUM, Priority.LOW):
-        combo.addItem(p.label, p)
-    return combo
 
 
 class _LinearWorker(QObject):
@@ -102,8 +94,8 @@ class LinearIntegrationTab(QWidget):
         super().__init__(parent)
         self._thread: QThread | None = None
         self._worker: _LinearWorker | None = None
-        # Per-state rows: state_id -> (checkbox, priority combo, name).
-        self._status_rows: dict[str, tuple[QCheckBox, QComboBox, str]] = {}
+        # Per-state rows: state_id -> (checkbox, name).
+        self._status_rows: dict[str, tuple[QCheckBox, str]] = {}
         self._build_ui()
         self._load()
 
@@ -150,8 +142,8 @@ class LinearIntegrationTab(QWidget):
         self._status_box = QGroupBox("Create tasks from these statuses")
         self._status_form = QFormLayout(self._status_box)
         self._status_hint = QLabel(
-            "Load statuses above, then tick each status you want to become tasks "
-            "and pick its priority."
+            "Load statuses above, then tick each status you want to become tasks. "
+            "Each task takes its priority from the Linear ticket."
         )
         self._status_hint.setWordWrap(True)
         self._status_hint.setEnabled(False)
@@ -193,7 +185,7 @@ class LinearIntegrationTab(QWidget):
 
     # ---- status rows -----------------------------------------------------
     def _populate_status_rows(self, states: list[dict]) -> None:
-        """Rebuild the status→priority rows from fetched workflow states,
+        """Rebuild the status checkbox rows from fetched workflow states,
         preserving any existing selection from the saved config."""
         saved = {str(s["id"]): s for s in self.current_config().status_priorities}
         # Clear previous rows (keep the hint at row 0).
@@ -207,17 +199,10 @@ class LinearIntegrationTab(QWidget):
             if not sid:
                 continue
             check = QCheckBox(name)
-            combo = _priority_combo()
-            # Sensible default for a not-yet-configured status.
-            combo.setCurrentIndex(combo.findData(Priority.MEDIUM))
             if sid in saved:
                 check.setChecked(True)
-                idx = combo.findData(Priority(int(saved[sid].get("priority",
-                                                                  int(Priority.MEDIUM)))))
-                if idx >= 0:
-                    combo.setCurrentIndex(idx)
-            self._status_form.addRow(check, combo)
-            self._status_rows[sid] = (check, combo, name)
+            self._status_form.addRow(check)
+            self._status_rows[sid] = (check, name)
         self._status_hint.setVisible(not states)
 
     def _populate_labels(self, labels: list[str]) -> None:
@@ -263,10 +248,9 @@ class LinearIntegrationTab(QWidget):
 
     def _status_priorities(self) -> list[dict]:
         rows = []
-        for sid, (check, combo, name) in self._status_rows.items():
+        for sid, (check, name) in self._status_rows.items():
             if check.isChecked():
-                rows.append({"id": sid, "name": name,
-                             "priority": int(combo.currentData())})
+                rows.append({"id": sid, "name": name})
         return rows
 
     # ---- config load/save ------------------------------------------------
@@ -438,6 +422,7 @@ class LinearIntegrationTab(QWidget):
         parts = [
             f"{summary['created']} created",
             f"{summary['completed']} completed",
+            f"{summary.get('reopened', 0)} reopened",
             f"{summary['skipped']} unchanged",
         ]
         self._status.setText(f"Synced {stamp} · " + ", ".join(parts) + ".")

@@ -16,6 +16,7 @@ from models.linear import (
     filter_excluded,
     issue_to_task_fields,
     linear_key,
+    linear_priority_to_app,
 )
 from models.schedule import Frequency, Occurrence, Schedule, occurs_on
 from models.task import Priority, Task
@@ -286,13 +287,32 @@ class TaskController:
                 self._repo.link_pr(key, task.id)
                 task_id = task.id
                 created += 1
-            # Refresh the unresolved-comment flag for authored PRs every sync so
-            # the task is pinned as Urgent while comments are open and drops back
-            # once they are resolved. (A no-op if the task was since deleted.)
+            # Refresh authored-PR tasks every sync so they follow the PR's state
+            # (a no-op if the task was since deleted):
+            #  - while comments are open the unresolved count pins the task as
+            #    Urgent, dropping back once they are resolved;
+            #  - a PR "waiting for author" is parked at Low priority with its pin
+            #    suppressed (unresolved count forced to 0) so it sits at the
+            #    bottom, and is restored to the configured author priority once it
+            #    leaves that state.
             if pr.is_author:
-                self._repo.set_unresolved_comments(
-                    task_id, pr.unresolved_comment_count
-                )
+                task = self._repo.get(task_id)
+                if task is not None:
+                    if pr.is_waiting_for_author:
+                        new_priority = Priority.LOW
+                        unresolved = 0
+                    else:
+                        new_priority = (config or AzureConfig()).priority_author
+                        unresolved = pr.unresolved_comment_count
+                    changed = False
+                    if task.priority != new_priority:
+                        task.priority = new_priority
+                        changed = True
+                    if task.unresolved_comments != unresolved:
+                        task.unresolved_comments = unresolved
+                        changed = True
+                    if changed:
+                        self._repo.update(task)
             # Mirror my review state onto review-source tasks: casting any vote
             # completes the task; a vote reset back to 0 (e.g. a new commit reset
             # approvals) reopens it so the PR gets another look.
@@ -361,17 +381,19 @@ class TaskController:
         excluded labels.
 
         - An eligible issue with no existing link becomes a new task (and is
-          linked), at the priority mapped to its current status.
+          linked), at the ticket's own Linear priority.
         - An eligible issue that already has a link is skipped, but its task's
-          priority is refreshed to the current status's mapping so moving a
-          ticket between selected statuses re-prioritises it.
+          priority is refreshed to the ticket's current Linear priority so a
+          re-prioritised ticket re-prioritises its task, and a task that was
+          auto-completed earlier is reopened if its ticket is eligible again
+          (moved back into a selected status).
         - A previously-linked issue that is *absent* from the eligible set
           (moved to an unselected status, gained an excluded label, was
           reassigned, or deleted) has its task completed.
 
         Reconciliation is scoped to the ``"linear:"`` key prefix so it never
         touches Azure PR links. The returned summary counts ``created`` /
-        ``skipped`` / ``completed``.
+        ``skipped`` / ``completed`` / ``reopened``.
         """
         prefix = "linear:"
         existing = {
@@ -389,16 +411,26 @@ class TaskController:
         ]
 
         current_keys = set()
-        created = skipped = completed = 0
+        created = skipped = completed = reopened = 0
         for issue in eligible:
             key = linear_key(issue.id)
             current_keys.add(key)
-            priority = config.priority_for(issue.state_id)
+            priority = linear_priority_to_app(issue.linear_priority)
             if key in existing:
                 task = self._repo.get(existing[key])
-                if task is not None and task.priority != priority:
-                    task.priority = priority
-                    self._repo.update(task)
+                if task is not None:
+                    changed = False
+                    if task.priority != priority:
+                        task.priority = priority
+                        changed = True
+                    # Reopen a task that was auto-completed when its ticket left
+                    # the selected statuses and has now returned to one.
+                    if task.completed:
+                        task.completed = False
+                        reopened += 1
+                        changed = True
+                    if changed:
+                        self._repo.update(task)
                 skipped += 1
             else:
                 fields = issue_to_task_fields(issue, priority)
@@ -415,7 +447,12 @@ class TaskController:
                 self._repo.set_completed(task_id, True)
                 completed += 1
 
-        return {"created": created, "skipped": skipped, "completed": completed}
+        return {
+            "created": created,
+            "skipped": skipped,
+            "completed": completed,
+            "reopened": reopened,
+        }
 
     def clear_linear_links(self) -> None:
         """Forget which Linear issues have been synced (Azure links are kept)."""

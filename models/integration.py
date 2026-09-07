@@ -80,6 +80,10 @@ class PullRequest:
     # Count of unresolved (active) comment threads. Only fetched for authored PRs;
     # a positive value pins the PR's task to the top as Urgent (see the controller).
     unresolved_comment_count: int = 0
+    # True for an authored PR that is "waiting for author" — a reviewer cast the
+    # -5 vote. Such a PR's task is parked at Low priority with its unresolved pin
+    # suppressed (see the controller). Always False for review-source PRs.
+    is_waiting_for_author: bool = False
 
     @property
     def review_completed(self) -> bool:
@@ -111,7 +115,8 @@ def pr_to_task_fields(pr: PullRequest, config: "AzureConfig | None" = None) -> d
     repo_part = f"{pr.repository} " if pr.repository else ""
     if pr.is_author:
         role = "author"
-        priority = config.priority_author
+        # A PR waiting for author is parked at the bottom until the author acts.
+        priority = Priority.LOW if pr.is_waiting_for_author else config.priority_author
         title = f"Your {repo_part}PR #{pr.pr_id}: {pr.title}"
     elif pr.is_required:
         role = "required"
