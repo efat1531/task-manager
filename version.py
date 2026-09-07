@@ -10,6 +10,13 @@ from __future__ import annotations
 
 APP_VERSION = "1.4.1"
 
+#: Human-facing metadata surfaced in the Help → About box. Kept here so the UI
+#: imports them from the same single source as the version.
+APP_AUTHOR = "Efat Sikder"
+APP_DESCRIPTION = "A personal task manager with Linear & Azure DevOps integration."
+APP_COPYRIGHT = "© 2026 Efat Sikder"
+APP_CONTACT_EMAIL = "efat1531@gmail.com"
+
 #: ``owner/repo`` used to build the GitHub Releases API and download URLs.
 GITHUB_REPO = "efat1531/task-manager"
 

@@ -29,7 +29,7 @@ _DEFAULT_RETRY_WAIT = 5
 _MAX_RETRY_WAIT = 30
 
 _ISSUE_FIELDS = (
-    "id identifier title url "
+    "id identifier title url priority "
     "state { id name type } "
     "labels { nodes { name } }"
 )
@@ -188,6 +188,7 @@ class LinearClient:
                     identifier=node.get("identifier", ""),
                     title=node.get("title", ""),
                     url=node.get("url", ""),
+                    linear_priority=int(node.get("priority") or 0),
                     state_id=state.get("id", ""),
                     state_name=state.get("name", ""),
                     state_type=state.get("type", ""),

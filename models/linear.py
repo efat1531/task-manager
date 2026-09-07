@@ -3,8 +3,8 @@
 Mirrors ``models.integration`` (the Azure DevOps integration) so the sync/dedup
 logic that consumes these objects stays unit-testable without a display or a
 network. Linear issues assigned to the authenticated user, sitting in one of the
-user-selected workflow statuses, become tasks; each status carries a
-user-chosen priority, and issues bearing an excluded label are left out.
+user-selected workflow statuses, become tasks at the ticket's own Linear
+priority, and issues bearing an excluded label are left out.
 """
 from __future__ import annotations
 
@@ -20,10 +20,11 @@ class LinearConfig:
     ``services.credentials``).
 
     ``status_priorities`` is the heart of the feature: each entry is
-    ``{"id": <workflowState id>, "name": <display name>, "priority": <int>}``.
-    A state listed here is one the user wants to create tasks from, and its
-    ``priority`` is the priority those tasks get. ``exclude_labels`` holds label
-    *names*; an issue carrying any of them is skipped.
+    ``{"id": <workflowState id>, "name": <display name>}``. A state listed here
+    is one the user wants to create tasks from. (The legacy ``"priority"`` key
+    may still be present in configs saved by older versions; it is ignored now
+    that task priority comes from the Linear ticket itself.) ``exclude_labels``
+    holds label *names*; an issue carrying any of them is skipped.
     """
 
     enabled: bool = False
@@ -35,16 +36,6 @@ class LinearConfig:
     def synced_state_ids(self) -> List[str]:
         """Workflow-state ids the user has opted to create tasks from."""
         return [str(s["id"]) for s in self.status_priorities if s.get("id")]
-
-    def priority_for(self, state_id: str) -> Priority:
-        """Priority mapped to ``state_id`` (Medium if the state isn't mapped)."""
-        for s in self.status_priorities:
-            if str(s.get("id")) == str(state_id):
-                try:
-                    return Priority(int(s.get("priority", int(Priority.MEDIUM))))
-                except (ValueError, TypeError):
-                    return Priority.MEDIUM
-        return Priority.MEDIUM
 
     def is_configured(self) -> bool:
         return bool(self.enabled and self.team_ids)
@@ -62,6 +53,7 @@ class LinearIssue:
     identifier: str = ""                 # human key, e.g. "ENG-123"
     title: str = ""
     url: str = ""
+    linear_priority: int = 0             # Linear's own scale: 0 None,1 Urgent…4 Low
     state_id: str = ""
     state_name: str = ""
     state_type: str = ""                 # backlog | unstarted | started | completed | canceled
@@ -89,12 +81,27 @@ def filter_excluded(
     return [i for i in issues if not (set(i.label_names) & excluded)]
 
 
+def linear_priority_to_app(value: int) -> Priority:
+    """Map Linear's priority scale onto the app's :class:`Priority`.
+
+    Linear: ``0`` No priority, ``1`` Urgent, ``2`` High, ``3`` Medium, ``4`` Low
+    (the inverse of the app enum). "No priority" (0), or any unexpected value,
+    defaults to Low.
+    """
+    return {
+        1: Priority.URGENT,
+        2: Priority.HIGH,
+        3: Priority.MEDIUM,
+        4: Priority.LOW,
+    }.get(int(value or 0), Priority.LOW)
+
+
 def issue_to_task_fields(issue: LinearIssue, priority: Priority) -> dict:
     """Map a Linear issue onto the fields used to create its task.
 
-    ``priority`` comes from the issue's status mapping (see
-    :meth:`LinearConfig.priority_for`). ``deadline`` is left unset so synced
-    tickets show on every day, matching the PR-task behaviour.
+    ``priority`` is the ticket's own Linear priority mapped to the app scale (see
+    :func:`linear_priority_to_app`). ``deadline`` is left unset so synced tickets
+    show on every day, matching the PR-task behaviour.
     """
     title = f"{issue.identifier}: {issue.title}" if issue.identifier else issue.title
     lines = [f"Linear issue {issue.identifier}".strip()]

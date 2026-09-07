@@ -268,6 +268,21 @@ def test_authored_pr_mapping():
     assert "author" in fields["description"].lower()
 
 
+def test_authored_waiting_pr_is_low_priority():
+    cfg = AzureConfig(priority_author=Priority.HIGH)
+    waiting = pr_to_task_fields(
+        PullRequest(pr_id=12, title="Mine", is_author=True,
+                    is_waiting_for_author=True),
+        cfg,
+    )
+    assert waiting["priority"] is Priority.LOW
+    # Not waiting -> the configured author priority stands.
+    normal = pr_to_task_fields(
+        PullRequest(pr_id=13, title="Mine", is_author=True), cfg
+    )
+    assert normal["priority"] is Priority.HIGH
+
+
 def test_pr_description_includes_labelled_link():
     fields = pr_to_task_fields(
         PullRequest(pr_id=7, title="Fix", url="https://dev.azure.com/o/_git/r/pr/7")
@@ -326,6 +341,30 @@ def test_parse_created_prs_marks_author():
     assert prs[0].is_author is True
     assert prs[0].is_required is False
     assert prs[0].repository_id == "repo-guid"
+    assert prs[0].is_waiting_for_author is False
+
+
+def test_parse_created_prs_detects_waiting_for_author():
+    def _payload(votes):
+        return {"value": [{
+            "pullRequestId": 202, "title": "Mine", "status": "active",
+            "repository": {"id": "g", "name": "web", "project": {"name": "S"}},
+            "createdBy": {"displayName": "Me"},
+            "reviewers": [{"id": f"r{i}", "vote": v} for i, v in enumerate(votes)],
+        }]}
+
+    # A reviewer voted "waiting for author" (-5) -> flagged.
+    assert AzureDevOpsClient._parse_created_prs(
+        _payload([10, -5])
+    )[0].is_waiting_for_author is True
+    # Only approvals / no votes -> not waiting.
+    assert AzureDevOpsClient._parse_created_prs(
+        _payload([10, 0])
+    )[0].is_waiting_for_author is False
+    # A rejection (-10) is not "waiting for author".
+    assert AzureDevOpsClient._parse_created_prs(
+        _payload([-10])
+    )[0].is_waiting_for_author is False
 
 
 # ---- unresolved comment threads ------------------------------------------
@@ -355,9 +394,11 @@ def test_active_comment_count_zero_without_repository_id():
 
 
 # ---- authored-PR unresolved-comment pinning ------------------------------
-def _author_pr(pr_id: int, unresolved: int = 0, title: str = "My PR") -> PullRequest:
+def _author_pr(pr_id: int, unresolved: int = 0, title: str = "My PR",
+               waiting: bool = False) -> PullRequest:
     return PullRequest(pr_id=pr_id, title=title, is_author=True,
-                       unresolved_comment_count=unresolved)
+                       unresolved_comment_count=unresolved,
+                       is_waiting_for_author=waiting)
 
 
 def test_sync_sets_unresolved_flag_for_authored_pr(controller):
@@ -382,6 +423,34 @@ def test_resync_refreshes_flag_on_already_linked_pr(controller):
 def test_review_pr_never_flagged(controller):
     controller.sync_pull_requests([_pr(1)], ORG, source="review")
     assert controller.list_tasks()[0].unresolved_comments == 0
+
+
+# ---- authored-PR "waiting for author" parking ----------------------------
+def test_sync_parks_waiting_for_author_pr(controller):
+    cfg = AzureConfig(priority_author=Priority.HIGH)
+    # A waiting-for-author PR that also reports unresolved comments: it must be
+    # Low priority with the unresolved pin suppressed so it sinks to the bottom.
+    controller.sync_pull_requests(
+        [_author_pr(1, unresolved=3, waiting=True)], ORG, source="author", config=cfg
+    )
+    task = controller.list_tasks()[0]
+    assert task.priority is Priority.LOW
+    assert task.unresolved_comments == 0
+
+
+def test_resync_restores_priority_when_no_longer_waiting(controller):
+    cfg = AzureConfig(priority_author=Priority.HIGH)
+    controller.sync_pull_requests(
+        [_author_pr(1, unresolved=3, waiting=True)], ORG, source="author", config=cfg
+    )
+    # The author pushed a fix: no longer waiting, comments still open. Priority
+    # returns to the configured author value and the unresolved pin is restored.
+    controller.sync_pull_requests(
+        [_author_pr(1, unresolved=3, waiting=False)], ORG, source="author", config=cfg
+    )
+    task = controller.list_tasks()[0]
+    assert task.priority is Priority.HIGH
+    assert task.unresolved_comments == 3
 
 
 # ---- review-vote auto-complete / reopen ----------------------------------
