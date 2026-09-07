@@ -69,8 +69,8 @@ def test_absent_pr_autocompletes_its_task(controller):
     summary = controller.sync_pull_requests([_pr(2)], ORG)
     assert summary["completed"] == 1
     by_title = {t.title: t for t in controller.list_tasks()}
-    assert by_title["Review PR #1: Feature"].completed is True
-    assert by_title["Review PR #2: Feature"].completed is False
+    assert by_title["Review repo PR #1: Feature"].completed is True
+    assert by_title["Review repo PR #2: Feature"].completed is False
 
 
 def test_autocomplete_is_idempotent(controller):
@@ -135,10 +135,20 @@ def test_pr_key_namespaces_by_source():
 
 def test_pr_to_task_fields_mapping():
     fields = pr_to_task_fields(_pr(9, "Fix bug"))
-    assert fields["title"] == "Review PR #9: Fix bug"
+    assert fields["title"] == "Review repo PR #9: Fix bug"
     assert fields["priority"] is Priority.HIGH
     assert fields["category"] == "Azure PR"
     assert fields["deadline"] is None
+
+
+def test_title_includes_repository_name():
+    authored = PullRequest(pr_id=59854, title="This is a test PR",
+                           repository="DenticonCore", is_author=True)
+    assert (pr_to_task_fields(authored)["title"]
+            == "Your DenticonCore PR #59854: This is a test PR")
+    # Repository unknown: the title falls back to the plain form (no stray space).
+    no_repo = PullRequest(pr_id=7, title="Fix", is_author=True)
+    assert pr_to_task_fields(no_repo)["title"] == "Your PR #7: Fix"
 
 
 # ---- pure JSON parsing (no HTTP) -----------------------------------------
