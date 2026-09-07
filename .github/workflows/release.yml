@@ -48,4 +48,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/TaskManager.exe
+          # Hand-written notes for the tagged release (update RELEASE_NOTES.md
+          # per release); the auto-generated changelog is appended after them.
+          body_path: RELEASE_NOTES.md
           generate_release_notes: true
