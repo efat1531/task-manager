@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import List
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QDrag
 from PySide6.QtWidgets import QAbstractItemView, QTableWidget
 
 
@@ -41,6 +42,28 @@ class TaskTable(QTableWidget):
         self.viewport().setAcceptDrops(enabled)
 
     # ---- drag-and-drop ---------------------------------------------------
+    def startDrag(self, supportedActions) -> None:  # noqa: N802 (Qt override)
+        """Run our own drag so the base view never deletes the source rows.
+
+        The default ``QAbstractItemView.startDrag`` calls ``clearOrRemove()`` after
+        ``drag.exec()`` returns a ``MoveAction`` — which, because we rebuild the whole
+        table from the database in response to ``rows_reordered``, deletes a row from
+        the *already rebuilt* table and makes a task vanish until the next refresh
+        (setting the drop action to Copy in ``dropEvent`` doesn't reliably suppress
+        this on Windows). We must still offer ``MoveAction`` so ``InternalMove``'s
+        ``dragMoveEvent`` accepts the drop and our ``dropEvent`` fires; we simply
+        ignore the returned action and never remove anything ourselves.
+        """
+        indexes = self.selectedIndexes()
+        if not indexes:
+            return
+        mime = self.model().mimeData(indexes)
+        if mime is None:
+            return
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        drag.exec(supportedActions, Qt.DropAction.MoveAction)
+
     def _row_id(self, row: int) -> int | None:
         item = self.item(row, 0)
         if item is None:

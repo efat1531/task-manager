@@ -11,6 +11,8 @@ The only layer that imports Qt (PySide6). Talks to the app through
 | `integration_tab.py` | Azure config UI + `_SyncWorker` (QThread network worker). |
 | `linear_tab.py` | Linear config UI (teams, per-status priority, exclude labels) + `_LinearWorker`. |
 | `update_dialog.py` | Auto-update: `_CheckWorker`/`_DownloadWorker`, prompt & "what's new" dialogs, `UpdateManager`. |
+| `blueprint.py` | `BlueprintFrame` — hairline-bordered panel with crosshair corner marks (integration tabs). |
+| `flow_layout.py` | `FlowLayout` — left-packed wrapping row layout for the Linear exclude-label chips. |
 | `theme.py` | Light/dark palettes, persisted via `QSettings`. |
 
 ## Invariants

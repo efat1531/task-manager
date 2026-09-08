@@ -15,6 +15,7 @@ hiddenimports = collect_submodules("keyring.backends") + [
 datas = [
     ("assets/icon.png", "assets"),
     ("assets/icon.ico", "assets"),
+    ("assets/fonts", "assets/fonts"),  # bundled Barlow family for the UI theme
     ("RELEASE_NOTES.md", "."),
 ]
 

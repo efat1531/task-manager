@@ -29,6 +29,11 @@ class LinearConfig:
 
     enabled: bool = False
     team_ids: List[str] = field(default_factory=list)
+    #: Display metadata for the selected teams, each ``{"id", "name", "key"}``.
+    #: ``team_ids`` stays authoritative for syncing; ``teams`` only remembers the
+    #: human name/key so the UI can show "Engineering (ENG)" instead of a bare id
+    #: after a restart. Empty for configs saved before this was added.
+    teams: List[dict] = field(default_factory=list)
     poll_minutes: int = 15
     status_priorities: List[dict] = field(default_factory=list)
     exclude_labels: List[str] = field(default_factory=list)
