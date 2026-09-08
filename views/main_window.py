@@ -11,13 +11,13 @@ from PySide6.QtWidgets import (
     QDateEdit,
     QDialog,
     QDialogButtonBox,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QTableWidgetItem,
     QTabWidget,
@@ -38,17 +38,23 @@ from version import (
     APP_VERSION,
     GITHUB_REPO,
 )
-from views import theme
+from views import icons, theme
 from views.integration_tab import IntegrationTab
 from views.linear_tab import LinearIntegrationTab
+from views.notification_center import NotificationBell
+from views.notifications_tab import NotificationsTab
 from views.task_dialog import TaskDialog
 from views.task_list import TaskTable
 from views.update_dialog import UpdateManager
 
 _ALL_CATEGORIES = "All categories"
 
-# Columns: [status, title, priority, deadline, category]
-_HEADERS = ["✓", "Title", "Priority", "Deadline", "Category"]
+# Map a priority display label to a badge style class (see theme.py QSS).
+_PRIO_BADGE = {"Urgent": "urgent", "High": "high", "Medium": "medium", "Low": "low"}
+
+# Columns: [status, title, priority, deadline, category].
+# Header labels are upper-cased to match the design's table styling.
+_HEADERS = ["✓", "TITLE", "PRIORITY", "DEADLINE", "CATEGORY"]
 
 
 class MainWindow(QMainWindow):
@@ -95,22 +101,26 @@ class MainWindow(QMainWindow):
         )
         self._tabs.addTab(self._linear_tab, "Linear")
 
+        # Notifications settings (visual shell — matches the design mockup).
+        self._notifications_tab = NotificationsTab()
+        self._tabs.addTab(self._notifications_tab, "Notifications")
+
         self.setCentralWidget(self._tabs)
 
-        # Footer busy indicator: an animated bar + label shown whenever any
-        # integration worker is running. Kept left of the countdown by adding it
-        # first. _busy_ops tracks the per-integration operation labels so
-        # concurrent Azure + Linear auto-syncs both show.
+        # Footer busy indicator: a compact "<spinner> <op>" label shown whenever
+        # any integration worker is running. Kept left of the countdown by adding
+        # it first. _busy_ops tracks the per-integration operation labels so
+        # concurrent Azure + Linear auto-syncs both show. The leading glyph is a
+        # QTimer-driven spinner (a plain "⟳" can't animate as static text).
         self._busy_ops: dict[str, str] = {}
+        self._busy_frame = 0
         self._busy_label = QLabel()
+        self._busy_label.setObjectName("busyIndicator")  # accent color via QSS
         self._busy_label.hide()
-        self._busy_bar = QProgressBar()
-        self._busy_bar.setRange(0, 0)  # indeterminate
-        self._busy_bar.setFixedWidth(90)
-        self._busy_bar.setTextVisible(False)
-        self._busy_bar.hide()
         self.statusBar().addPermanentWidget(self._busy_label)
-        self.statusBar().addPermanentWidget(self._busy_bar)
+        self._busy_timer = QTimer(self)
+        self._busy_timer.setInterval(90)
+        self._busy_timer.timeout.connect(self._tick_busy_spinner)
 
         # Footer: a permanent status-bar label counting down to the next Azure /
         # Linear auto-sync. Each side shows only while that integration has active
@@ -136,6 +146,9 @@ class MainWindow(QMainWindow):
 
     def _build_menu(self) -> None:
         """Menu bar: a Data menu for maintenance and a Help menu."""
+        # "&" keeps Alt+D / Alt+H navigation; the accelerator underline under the
+        # D/H is suppressed app-wide by _NoMnemonicStyle (see theme.apply_theme),
+        # so the labels read as plain "Data"/"Help" per the design mockup.
         data_menu = self.menuBar().addMenu("&Data")
         reset_action = data_menu.addAction("Reset (clear all data)…")
         reset_action.triggered.connect(self._on_reset_database)
@@ -145,6 +158,21 @@ class MainWindow(QMainWindow):
         check_action.triggered.connect(self._on_check_for_updates)
         about_action = help_menu.addAction("About Task Manager")
         about_action.triggered.connect(self._on_about)
+
+        # Right of the menu row: notification bell + version tag (matches design).
+        # Held on self: setCornerWidget doesn't keep a Python-visible owner, so a
+        # local-only reference would be garbage-collected (taking the bell with it).
+        corner = QWidget()
+        self._menu_corner = corner
+        corner_row = QHBoxLayout(corner)
+        corner_row.setContentsMargins(0, 0, 0, 0)
+        corner_row.setSpacing(10)
+        self._bell = NotificationBell(self)
+        version_tag = QLabel(f"v{APP_VERSION}")
+        version_tag.setObjectName("versionTag")
+        corner_row.addWidget(self._bell)
+        corner_row.addWidget(version_tag)
+        self.menuBar().setCornerWidget(corner, Qt.Corner.TopRightCorner)
 
     def _on_reset_database(self) -> None:
         """Wipe every task, schedule, and integration link after confirmation."""
@@ -191,6 +219,7 @@ class MainWindow(QMainWindow):
         # Toolbar row: add / edit / delete / complete + sort selector.
         toolbar = QHBoxLayout()
         self._add_btn = QPushButton("Add")
+        self._add_btn.setObjectName("primary")  # filled-accent primary action
         self._edit_btn = QPushButton("Edit")
         self._delete_btn = QPushButton("Delete")
         self._complete_btn = QPushButton("Toggle Complete")
@@ -238,12 +267,15 @@ class MainWindow(QMainWindow):
         self._day.setCalendarPopup(True)
         self._day.setDisplayFormat("ddd, yyyy-MM-dd")
         self._day.setDate(QDate.currentDate())
+        self._day.setMinimumWidth(160)
         self._day.dateChanged.connect(self.refresh)
         self._prev_day_btn.clicked.connect(lambda: self._step_day(-1))
         self._next_day_btn.clicked.connect(lambda: self._step_day(1))
         self._today_btn.clicked.connect(lambda: self._day.setDate(QDate.currentDate()))
 
-        day_row.addWidget(QLabel("Day:"))
+        day_caption = QLabel("DAY")
+        day_caption.setObjectName("dayCaption")
+        day_row.addWidget(day_caption)
         day_row.addWidget(self._prev_day_btn)
         day_row.addWidget(self._day)
         day_row.addWidget(self._next_day_btn)
@@ -256,6 +288,11 @@ class MainWindow(QMainWindow):
         self._search = QLineEdit()
         self._search.setPlaceholderText("Search title / description…")
         self._search.setClearButtonEnabled(True)
+        # Leading magnifier icon (re-themed in _apply_theme).
+        self._search_action = self._search.addAction(
+            icons.svg_icon(icons.SEARCH, QColor("#000000"), 15),
+            QLineEdit.ActionPosition.LeadingPosition,
+        )
         self._search.textChanged.connect(self.refresh)
 
         self._status_filter = QComboBox()
@@ -287,12 +324,21 @@ class MainWindow(QMainWindow):
         self._table = TaskTable(0, len(_HEADERS))
         self._table.setHorizontalHeaderLabels(_HEADERS)
         self._table.verticalHeader().setVisible(False)
+        # Rows carry a priority badge widget; give them room so it isn't clipped.
+        self._table.verticalHeader().setDefaultSectionSize(40)
         self._table.doubleClicked.connect(self._on_edit)
         self._table.rows_reordered.connect(self._on_rows_reordered)
+        # Row checkboxes toggle completion; guard the signal while (re)populating.
+        self._populating = False
+        self._table.itemChanged.connect(self._on_item_checked)
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for col in range(2, len(_HEADERS)):
+        # Priority holds a badge cell-widget, which ResizeToContents can't measure;
+        # pin it to a fixed width so the pill isn't clipped.
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self._table.setColumnWidth(2, 104)
+        for col in range(3, len(_HEADERS)):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         root.addWidget(self._table)
 
@@ -328,9 +374,11 @@ class MainWindow(QMainWindow):
         self._table.set_reorder_enabled(order_by == "sort_order")
 
         rows = [item for item in all_rows if self._passes_filters(item)]
+        self._populating = True
         self._table.setRowCount(len(rows))
         for row, item in enumerate(rows):
             self._populate_row(row, item)
+        self._populating = False
 
         total = len(all_rows)
         done = sum(1 for t in all_rows if t.completed)
@@ -374,12 +422,48 @@ class MainWindow(QMainWindow):
         self._controller.reorder_tasks(ordered_ids)
         self.refresh()
 
+    def _on_item_checked(self, item) -> None:
+        """Toggle completion when a row's checkbox is clicked (col 0)."""
+        if self._populating or item.column() != 0:
+            return
+        task = item.data(Qt.ItemDataRole.UserRole)
+        if task is None:
+            return
+        desired = item.checkState() == Qt.CheckState.Checked
+        if bool(getattr(task, "completed", False)) == desired:
+            return
+        if isinstance(task, Occurrence):
+            self._controller.toggle_occurrence(task.schedule_id, task.date)
+        else:
+            self._controller.toggle_completed(task)
+        self.refresh()
+
+    def _set_cell_widget(self, row: int, col: int, widget) -> None:
+        """Set (or clear, when ``widget`` is None) a cell widget, destroying the
+        one it replaces. ``removeCellWidget`` alone only detaches the old widget —
+        it lingers at (0, 0) and paints over other cells — so delete it explicitly.
+        """
+        old = self._table.cellWidget(row, col)
+        if old is not None:
+            self._table.removeCellWidget(row, col)
+            old.deleteLater()
+        if widget is not None:
+            self._table.setCellWidget(row, col, widget)
+
     def _populate_row(self, row: int, task) -> None:
         unresolved = getattr(task, "unresolved_comments", 0) or 0
 
-        status = QTableWidgetItem("✓" if task.completed else "")
+        # Column 0 is a checkbox reflecting completion (and toggling it). The Task
+        # is stashed on this item for retrieval on select / drag / edit.
+        status = QTableWidgetItem()
+        status.setFlags(
+            (Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+             | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsDragEnabled)
+        )
+        status.setCheckState(
+            Qt.CheckState.Checked if task.completed else Qt.CheckState.Unchecked
+        )
         status.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Stash the Task on the first column for retrieval on select.
         status.setData(Qt.ItemDataRole.UserRole, task)
 
         # 🔁 marks recurring occurrences; 🔴 marks authored PRs with unresolved
@@ -398,16 +482,11 @@ class MainWindow(QMainWindow):
         # a trailing ↗. Trade-off: clicking the title area of a linked row no
         # longer selects/edit-opens it — select via any other cell instead.
         url = linkify.first_url(task.title, task.description)
-        title_item = None if url else QTableWidgetItem(title)
 
         row_items = [
-            status,
-            QTableWidgetItem(priority_label),
             QTableWidgetItem(task.deadline or "—"),
             QTableWidgetItem(task.category or "—"),
         ]
-        if title_item is not None:
-            row_items.append(title_item)
         for item in row_items:
             if task.completed:
                 font = item.font()
@@ -418,19 +497,15 @@ class MainWindow(QMainWindow):
                 item.setForeground(self._overdue_color)
 
         self._table.setItem(row, 0, status)
-        self._table.setItem(row, 2, row_items[1])
-        self._table.setItem(row, 3, row_items[2])
-        self._table.setItem(row, 4, row_items[3])
+        self._table.setItem(row, 3, row_items[0])
+        self._table.setItem(row, 4, row_items[1])
 
-        # Clear any link widget AND any leftover item from a previous population
-        # of this row index, so a transparent link QLabel is never drawn over
-        # stale item text (rows are reused across refresh()).
-        self._table.removeCellWidget(row, 1)
+        # Priority renders as a coloured badge.
+        self._set_cell_widget(row, 2, self._make_priority_badge(priority_label, task.completed))
+
+        # Title cell: a drag grip + the (linked or plain) title.
         self._table.takeItem(row, 1)
-        if url:
-            self._table.setCellWidget(row, 1, self._make_title_link(task, title, url))
-        else:
-            self._table.setItem(row, 1, title_item)
+        self._set_cell_widget(row, 1, self._make_title_cell(task, title, url))
 
         if unresolved > 0:
             tip = f"{unresolved} unresolved comment(s)"
@@ -441,6 +516,53 @@ class MainWindow(QMainWindow):
                     cell.setToolTip(tip)
                 if widget is not None:
                     widget.setToolTip(tip)
+
+    @staticmethod
+    def _make_priority_badge(label: str, completed: bool) -> QWidget:
+        """A square accent pill for the priority column (styled in theme.py)."""
+        badge = QLabel(label)
+        badge.setObjectName("badge")
+        badge.setProperty("prio", _PRIO_BADGE.get(label, "medium"))
+        if completed:
+            badge.setProperty("muted", "true")
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        container = QWidget()
+        container.setObjectName("cellWrap")  # transparent, so row selection shows
+        box = QHBoxLayout(container)
+        box.setContentsMargins(10, 6, 10, 6)
+        box.addWidget(badge)
+        box.addStretch(1)
+        return container
+
+    def _make_title_cell(self, task, display_title: str, url) -> QWidget:
+        """Title cell: a drag grip followed by the (linked or plain) title."""
+        container = QWidget()
+        container.setObjectName("cellWrap")
+        box = QHBoxLayout(container)
+        box.setContentsMargins(8, 0, 8, 0)
+        box.setSpacing(8)
+        grip = QLabel("⠿")
+        grip.setObjectName("grip")
+        box.addWidget(grip, 0, Qt.AlignmentFlag.AlignVCenter)
+        if url:
+            title = self._make_title_link(task, display_title, url)
+        else:
+            title = self._make_plain_title(task, display_title)
+        box.addWidget(title, 1)
+        return container
+
+    def _make_plain_title(self, task, display_title: str) -> QLabel:
+        """A non-linked title label, tinted for completed / overdue rows."""
+        label = QLabel(display_title)
+        if task.completed:
+            font = label.font()
+            font.setStrikeOut(True)
+            label.setFont(font)
+            label.setStyleSheet("color:#8c8c8c;")
+        elif getattr(task, "is_overdue", False):
+            label.setStyleSheet(f"color:{self._overdue_color.name()};")
+        return label
 
     def _make_title_link(self, task, display_title: str, url: str) -> QLabel:
         """A rich-text title cell whose PR number / ↗ opens ``url`` in the browser."""
@@ -713,16 +835,29 @@ class MainWindow(QMainWindow):
             self._busy_ops.pop(source, None)
         self._refresh_busy_indicator()
 
+    # Braille spinner frames — a smooth rotating cycle that renders in any font.
+    _BUSY_FRAMES = "⣾⣽⣻⢿⡿⣟⣯⣷"
+
     def _refresh_busy_indicator(self) -> None:
-        """Show the animated footer bar while any integration worker is active."""
+        """Show the animated footer spinner while any integration worker runs."""
         if self._busy_ops:
-            self._busy_label.setText("⟳ " + " · ".join(self._busy_ops.values()))
+            self._paint_busy_label()
             self._busy_label.show()
-            self._busy_bar.show()
+            if not self._busy_timer.isActive():
+                self._busy_timer.start()
         else:
+            self._busy_timer.stop()
+            self._busy_frame = 0
             self._busy_label.clear()
             self._busy_label.hide()
-            self._busy_bar.hide()
+
+    def _paint_busy_label(self) -> None:
+        frame = self._BUSY_FRAMES[self._busy_frame % len(self._BUSY_FRAMES)]
+        self._busy_label.setText(f"{frame} " + " · ".join(self._busy_ops.values()))
+
+    def _tick_busy_spinner(self) -> None:
+        self._busy_frame += 1
+        self._paint_busy_label()
 
     @staticmethod
     def _format_countdown(remaining_ms: int, name: str) -> str:
@@ -788,6 +923,17 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             theme.apply_theme(app, self._dark)
+        self._refresh_icons()
+
+    def _refresh_icons(self) -> None:
+        """(Re)paint the toolbar / search / bell icons in the current theme."""
+        on_accent = QColor(theme.token("on_accent", self._dark))
+        text = QColor(theme.token("text", self._dark))
+        muted = QColor(theme.token("neutral_600", self._dark))
+        self._add_btn.setIcon(icons.svg_icon(icons.PLUS, on_accent, 15))
+        self._undo_btn.setIcon(icons.svg_icon(icons.UNDO, text, 14))
+        self._search_action.setIcon(icons.svg_icon(icons.SEARCH, muted, 15))
+        self._bell.set_theme(self._dark)
 
     def _on_toggle_dark(self, dark: bool) -> None:
         self._dark = dark
@@ -810,6 +956,58 @@ class MainWindow(QMainWindow):
         message = " · ".join(parts)
         notifier.notify("Task reminders", message)
         self._status.setText(f"Reminders: {message}")
+        self._show_reminder_toast(message)
+
+    # ---- in-window reminder toast ---------------------------------------
+    def _show_reminder_toast(self, message: str) -> None:
+        """A dismissible bottom-right toast mirroring the OS reminder (per design)."""
+        toast = QFrame(self)
+        toast.setObjectName("toast")
+        lay = QHBoxLayout(toast)
+        lay.setContentsMargins(14, 12, 10, 12)
+        lay.setSpacing(10)
+        icon = QLabel()
+        icon.setPixmap(
+            icons.svg_icon(icons.BELL, QColor(theme.token("accent", self._dark)), 18)
+            .pixmap(18, 18)
+        )
+        lay.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        title = QLabel("Task reminders")
+        title.setObjectName("toastTitle")
+        body = QLabel(message)
+        body.setObjectName("toastBody")
+        col.addWidget(title)
+        col.addWidget(body)
+        lay.addLayout(col, 1)
+        close = QPushButton("✕")
+        close.setObjectName("linkButton")
+        close.setFixedWidth(22)
+        close.clicked.connect(toast.close)
+        lay.addWidget(close, 0, Qt.AlignmentFlag.AlignTop)
+
+        self._reminder_toast = toast
+        toast.setFixedWidth(300)
+        toast.adjustSize()
+        toast.show()
+        self._position_toast()
+        toast.raise_()
+        QTimer.singleShot(9000, toast.close)
+
+    def _position_toast(self) -> None:
+        toast = getattr(self, "_reminder_toast", None)
+        if toast is None or toast.isHidden():
+            return
+        margin = 16
+        status_h = self.statusBar().height()
+        x = self.width() - toast.width() - margin
+        y = self.height() - toast.height() - status_h - margin
+        toast.move(max(0, x), max(0, y))
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        self._position_toast()
 
     def _warn_no_selection(self) -> None:
         QMessageBox.information(self, "No selection", "Please select a task first.")

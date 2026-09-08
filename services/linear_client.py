@@ -116,12 +116,12 @@ class LinearClient:
         return list(((data.get("teams") or {}).get("nodes")) or [])
 
     def list_workflow_states(self, team_ids: List[str]) -> List[dict]:
-        """Workflow states for the given teams, as ``{id, name, type}`` dicts."""
+        """Workflow states for the given teams, as ``{id, name, type, color}`` dicts."""
         if not team_ids:
             return []
         query = (
             "query($teams:[ID!]){ workflowStates(first:250,"
-            " filter:{team:{id:{in:$teams}}}) { nodes { id name type } } }"
+            " filter:{team:{id:{in:$teams}}}) { nodes { id name type color } } }"
         )
         data = self._post(query, {"teams": list(team_ids)})
         return list(((data.get("workflowStates") or {}).get("nodes")) or [])

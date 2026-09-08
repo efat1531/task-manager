@@ -7,17 +7,19 @@ controller and refreshes the task list.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
-    QGroupBox,
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -27,6 +29,7 @@ from models.integration import AzureConfig
 from models.task import Priority
 from services import credentials, integration_settings
 from services.azure_client import AzureDevOpsClient, AzureError
+from views.blueprint import BlueprintFrame
 
 
 def _priority_combo() -> QComboBox:
@@ -119,13 +122,74 @@ class IntegrationTab(QWidget):
 
     # ---- UI --------------------------------------------------------------
     def _build_ui(self) -> None:
-        root = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        inner = QWidget()
+        root = QVBoxLayout(inner)
+        root.setContentsMargins(18, 16, 18, 16)
+        root.setSpacing(14)
 
-        box = QGroupBox("Azure DevOps")
-        form = QFormLayout(box)
+        heading = QLabel("Azure DevOps")
+        heading.setObjectName("pageHeading")
+        subtitle = QLabel(
+            "Turn your pull requests into tasks. The access token is stored in the OS "
+            "keyring — never in the app database."
+        )
+        subtitle.setObjectName("pageSubtitle")
+        subtitle.setWordWrap(True)
+        root.addWidget(heading)
+        root.addWidget(subtitle)
+
+        # ---- two blueprint panels, side by side, top-aligned -------------
+        columns = QGridLayout()
+        columns.setHorizontalSpacing(18)
+        columns.setColumnStretch(0, 1)
+        columns.setColumnStretch(1, 1)
+        columns.addWidget(self._build_connection_panel(), 0, 0, Qt.AlignmentFlag.AlignTop)
+        columns.addWidget(self._build_sources_panel(), 0, 1, Qt.AlignmentFlag.AlignTop)
+        root.addLayout(columns)
+
+        buttons = QHBoxLayout()
+        self._save_btn = QPushButton("Save")
+        self._save_btn.setObjectName("primary")
+        self._test_btn = QPushButton("Test connection")
+        self._sync_btn = QPushButton("Sync now")
+        self._save_btn.clicked.connect(self._on_save)
+        self._test_btn.clicked.connect(self._on_test)
+        self._sync_btn.clicked.connect(lambda: self.trigger_sync(auto=False))
+        self._remove_btn = QPushButton("Remove integration")
+        self._remove_btn.setObjectName("danger")
+        self._remove_btn.clicked.connect(self._on_remove)
+        buttons.addWidget(self._save_btn)
+        buttons.addWidget(self._test_btn)
+        buttons.addWidget(self._sync_btn)
+        buttons.addStretch(1)
+        buttons.addWidget(self._remove_btn)
+        root.addLayout(buttons)
+
+        self._status = QLabel("Not configured.")
+        self._status.setObjectName("statusStrip")
+        self._status.setWordWrap(True)
+        root.addWidget(self._status)
+        root.addStretch(1)
+
+        scroll.setWidget(inner)
+        outer.addWidget(scroll)
+
+    def _build_connection_panel(self) -> BlueprintFrame:
+        """Left panel: enable switch + connection settings."""
+        panel = BlueprintFrame()
 
         self._enabled = QCheckBox("Enable Azure integration")
-        form.addRow(self._enabled)
+        self._enabled.setObjectName("cardHeading")
+        panel.body.addWidget(self._enabled)
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(11)
 
         self._org = QLineEdit()
         self._org.setPlaceholderText("myorg  or  https://dev.azure.com/myorg")
@@ -142,79 +206,75 @@ class IntegrationTab(QWidget):
 
         self._poll = QSpinBox()
         self._poll.setRange(1, 1440)
-        self._poll.setSuffix(" min")
-        form.addRow("Auto-sync every", self._poll)
+        self._poll.setFixedWidth(70)
+        poll_row = QHBoxLayout()
+        poll_row.setSpacing(8)
+        poll_row.addWidget(self._poll)
+        poll_suffix = QLabel("minutes, off the UI thread")
+        poll_suffix.setObjectName("mutedHint")
+        poll_row.addWidget(poll_suffix)
+        poll_row.addStretch(1)
+        form.addRow("Auto-sync every", poll_row)
 
-        root.addWidget(box)
+        panel.body.addLayout(form)
+        return panel
 
-        # ---- task-source configuration -----------------------------------
-        sources = QGroupBox("Create tasks from pull requests")
-        src_form = QFormLayout(sources)
+    def _build_sources_panel(self) -> BlueprintFrame:
+        """Right panel: which PRs become tasks, with per-source priorities."""
+        panel = BlueprintFrame()
+
+        title = QLabel("Create tasks from pull requests")
+        title.setObjectName("blueprintTitle")
+        panel.body.addWidget(title)
 
         # Reviewer source: enable + required/optional priorities.
+        reviewer_card = QFrame()
+        reviewer_card.setObjectName("card")
+        rc = QVBoxLayout(reviewer_card)
+        rc.setContentsMargins(14, 12, 14, 12)
+        rc.setSpacing(10)
         self._cb_reviewer = QCheckBox("Create tasks for PRs I review")
+        self._cb_reviewer.setObjectName("cardHeading")
         self._cb_reviewer.toggled.connect(self._update_source_visibility)
-        src_form.addRow(self._cb_reviewer)
+        rc.addWidget(self._cb_reviewer)
 
+        reviewer_form = QFormLayout()
+        reviewer_form.setHorizontalSpacing(16)
+        reviewer_form.setVerticalSpacing(10)
         self._priority_required = _priority_combo()
         self._required_label = QLabel("Required-reviewer priority")
-        src_form.addRow(self._required_label, self._priority_required)
-
+        reviewer_form.addRow(self._required_label, self._priority_required)
         self._priority_optional = _priority_combo()
         self._optional_label = QLabel("Optional-reviewer priority")
-        src_form.addRow(self._optional_label, self._priority_optional)
+        reviewer_form.addRow(self._optional_label, self._priority_optional)
+        rc.addLayout(reviewer_form)
+        panel.body.addWidget(reviewer_card)
 
         # Author source: enable + priority.
+        author_card = QFrame()
+        author_card.setObjectName("card")
+        ac = QVBoxLayout(author_card)
+        ac.setContentsMargins(14, 12, 14, 12)
+        ac.setSpacing(10)
         self._cb_author = QCheckBox("Create tasks for PRs I created")
+        self._cb_author.setObjectName("cardHeading")
         self._cb_author.toggled.connect(self._update_source_visibility)
-        src_form.addRow(self._cb_author)
+        ac.addWidget(self._cb_author)
 
+        author_form = QFormLayout()
+        author_form.setHorizontalSpacing(16)
+        author_form.setVerticalSpacing(10)
         self._priority_author = _priority_combo()
         self._author_label = QLabel("My-PR priority")
-        src_form.addRow(self._author_label, self._priority_author)
+        author_form.addRow(self._author_label, self._priority_author)
+        ac.addLayout(author_form)
+        panel.body.addWidget(author_card)
 
-        root.addWidget(sources)
-
-        buttons = QHBoxLayout()
-        self._save_btn = QPushButton("Save")
-        self._test_btn = QPushButton("Test connection")
-        self._sync_review_btn = QPushButton("Sync review PRs")
-        self._sync_author_btn = QPushButton("Sync my PRs")
-        self._save_btn.clicked.connect(self._on_save)
-        self._test_btn.clicked.connect(self._on_test)
-        self._sync_review_btn.clicked.connect(lambda: self._sync_source("review"))
-        self._sync_author_btn.clicked.connect(lambda: self._sync_source("author"))
-        self._remove_btn = QPushButton("Remove integration")
-        self._remove_btn.clicked.connect(self._on_remove)
-        buttons.addWidget(self._save_btn)
-        buttons.addWidget(self._test_btn)
-        buttons.addWidget(self._sync_review_btn)
-        buttons.addWidget(self._sync_author_btn)
-        buttons.addStretch(1)
-        buttons.addWidget(self._remove_btn)
-        root.addLayout(buttons)
-
-        self._status = QLabel("Not configured.")
-        self._status.setWordWrap(True)
-        root.addWidget(self._status)
-
-        help_text = QLabel(
-            "Choose which pull requests become tasks and at what priority. "
-            "For <b>PRs you review</b>, required and optional reviews can each get their "
-            "own priority; for <b>PRs you created</b>, pick a single priority. Each PR "
-            "creates a task only once. When a PR is merged, abandoned, or you are no "
-            "longer involved, its task is marked complete on the next sync. A review "
-            "task is also completed once you cast your vote, and reopens if a new "
-            "commit resets your vote."
-        )
-        help_text.setWordWrap(True)
-        help_text.setEnabled(False)
-        root.addWidget(help_text)
-        root.addStretch(1)
+        return panel
 
     def _update_source_visibility(self) -> None:
-        """Show each source's priority selectors and enable its Sync button only
-        when that source is switched on."""
+        """Show each source's priority selectors when that source is switched on,
+        and enable Sync now while at least one source is active."""
         reviewer_on = self._cb_reviewer.isChecked()
         author_on = self._cb_author.isChecked()
         for w in (self._required_label, self._priority_required,
@@ -222,8 +282,7 @@ class IntegrationTab(QWidget):
             w.setVisible(reviewer_on)
         for w in (self._author_label, self._priority_author):
             w.setVisible(author_on)
-        self._sync_review_btn.setEnabled(reviewer_on)
-        self._sync_author_btn.setEnabled(author_on)
+        self._sync_btn.setEnabled(reviewer_on or author_on)
 
     # ---- config load/save ------------------------------------------------
     def _load(self) -> None:
@@ -333,10 +392,6 @@ class IntegrationTab(QWidget):
         self._pat.setPlaceholderText("Personal Access Token (Code → Read)")
         self._status.setText("Integration removed.")
 
-    def _sync_source(self, source: str) -> None:
-        """Manual sync of a single source from its button."""
-        self._start_worker("sync", sources=[source])
-
     def trigger_sync(self, *, auto: bool = False) -> None:
         """Kick off a background sync of every enabled source. ``auto`` marks
         poll-driven runs (quieter — it no-ops when nothing is configured)."""
@@ -419,9 +474,8 @@ class IntegrationTab(QWidget):
     def _set_busy(self, busy: bool) -> None:
         for btn in (self._test_btn, self._save_btn, self._remove_btn):
             btn.setEnabled(not busy)
-        # Sync buttons additionally depend on whether their source is enabled.
+        # Sync now additionally depends on whether a source is enabled.
         if busy:
-            self._sync_review_btn.setEnabled(False)
-            self._sync_author_btn.setEnabled(False)
+            self._sync_btn.setEnabled(False)
         else:
             self._update_source_visibility()

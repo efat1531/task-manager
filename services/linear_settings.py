@@ -36,9 +36,15 @@ def load_config() -> LinearConfig:
         status_priorities = json.loads(raw) if raw else []
     except (ValueError, TypeError):
         status_priorities = []
+    raw_teams = s.value("linear/teams", "", type=str)
+    try:
+        teams = json.loads(raw_teams) if raw_teams else []
+    except (ValueError, TypeError):
+        teams = []
     return LinearConfig(
         enabled=s.value("linear/enabled", False, type=bool),
         team_ids=_as_list(s.value("linear/team_ids", [])),
+        teams=teams,
         poll_minutes=s.value("linear/poll_minutes", 15, type=int),
         status_priorities=status_priorities,
         exclude_labels=_as_list(s.value("linear/exclude_labels", [])),
@@ -49,6 +55,7 @@ def save_config(config: LinearConfig) -> None:
     s = _settings()
     s.setValue("linear/enabled", config.enabled)
     s.setValue("linear/team_ids", list(config.team_ids))
+    s.setValue("linear/teams", json.dumps(config.teams))
     s.setValue("linear/poll_minutes", config.poll_minutes)
     s.setValue("linear/status_priorities", json.dumps(config.status_priorities))
     s.setValue("linear/exclude_labels", list(config.exclude_labels))
@@ -58,7 +65,7 @@ def clear_config() -> None:
     """Remove every stored Linear setting (the API key is cleared separately)."""
     s = _settings()
     for key in (
-        "enabled", "team_ids", "poll_minutes",
+        "enabled", "team_ids", "teams", "poll_minutes",
         "status_priorities", "exclude_labels",
     ):
         s.remove(f"linear/{key}")

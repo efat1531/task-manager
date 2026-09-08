@@ -14,6 +14,7 @@ from typing import Optional
 
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDateEdit,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
+    QPushButton,
     QWidget,
 )
 
@@ -54,9 +56,21 @@ class TaskDialog(QDialog):
         self._description.setPlaceholderText("Optional details…")
         self._description.setFixedHeight(80)
 
-        self._priority = QComboBox()
+        # Priority as a segmented control (Urgent / High / Medium / Low).
+        self._priority = QWidget()
+        seg = QHBoxLayout(self._priority)
+        seg.setContentsMargins(0, 0, 0, 0)
+        seg.setSpacing(0)
+        self._priority_group = QButtonGroup(self)
+        self._priority_group.setExclusive(True)
+        self._priority_buttons: dict[Priority, QPushButton] = {}
         for p in (Priority.URGENT, Priority.HIGH, Priority.MEDIUM, Priority.LOW):
-            self._priority.addItem(p.label, p)
+            button = QPushButton(p.label)
+            button.setCheckable(True)
+            button.setObjectName("segButton")
+            self._priority_group.addButton(button)
+            self._priority_buttons[p] = button
+            seg.addWidget(button)
 
         self._category = QLineEdit()
         self._category.setPlaceholderText("Optional tag / project")
@@ -105,7 +119,19 @@ class TaskDialog(QDialog):
         elif schedule is not None:
             self._load_schedule(schedule)
         else:
-            self._priority.setCurrentIndex(self._priority.findData(Priority.MEDIUM))
+            self._set_priority(Priority.MEDIUM)
+
+    # ---- priority segmented control -------------------------------------
+    def _set_priority(self, priority: Priority) -> None:
+        button = self._priority_buttons.get(Priority(priority))
+        if button is not None:
+            button.setChecked(True)
+
+    def _get_priority(self) -> Priority:
+        for priority, button in self._priority_buttons.items():
+            if button.isChecked():
+                return priority
+        return Priority.MEDIUM
 
     # ---- schedule sub-widget --------------------------------------------
     def _build_schedule_widget(self) -> QWidget:
@@ -159,9 +185,7 @@ class TaskDialog(QDialog):
     def _load_common(self, title, description, priority, category) -> None:
         self._title.setText(title)
         self._description.setPlainText(description)
-        idx = self._priority.findData(priority)
-        if idx >= 0:
-            self._priority.setCurrentIndex(idx)
+        self._set_priority(priority)
         self._category.setText(category)
 
     def _load_task(self, task: Task) -> None:
@@ -201,9 +225,7 @@ class TaskDialog(QDialog):
         common = {
             "title": self._title.text().strip(),
             "description": self._description.toPlainText().strip(),
-            # Qt may return enums stored as userData flattened to their base type
-            # (Frequency is a str-Enum), so coerce back to the enum explicitly.
-            "priority": Priority(self._priority.currentData()),
+            "priority": self._get_priority(),
             "category": self._category.text().strip(),
         }
         if self._repeat.isChecked():

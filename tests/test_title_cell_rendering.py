@@ -1,11 +1,9 @@
-"""Title-cell rendering: a linked title must not overlap a stale plain item.
+"""Title-cell rendering: the title cell is always a widget, never a stale item.
 
-Regression for the "colliding titles" bug: rows are reused across refresh(), and
-a task with a URL renders its title as a transparent QLabel cell widget while a
-task without a URL renders a plain QTableWidgetItem. When a row index switched
-from a non-link task to a link task, the old item was left under the transparent
-widget, so two titles were painted on top of each other. _populate_row must clear
-both the leftover widget and the leftover item when repopulating column 1.
+The title column renders a cell widget (a drag grip + the linked-or-plain title)
+for every row. Rows are reused across refresh(), so _populate_row must clear any
+leftover QTableWidgetItem when it installs the widget — otherwise an old plain
+item would be painted under the transparent widget (the "colliding titles" bug).
 
 Needs a QApplication; runs headless under QT_QPA_PLATFORM=offscreen (as CI does).
 """
@@ -70,30 +68,31 @@ def _linked(tid=2):
     )
 
 
-def test_linked_title_clears_stale_item(window):
+def test_linked_title_is_widget_without_stale_item(window):
     table = window._table
     table.setRowCount(1)
 
-    # First a plain task: a real item, no cell widget.
+    # A plain task: a title widget, and no leftover item beneath it.
     window._populate_row(0, _plain())
-    assert table.item(0, 1) is not None
-    assert table.cellWidget(0, 1) is None
+    assert table.cellWidget(0, 1) is not None
+    assert table.item(0, 1) is None
 
-    # Then a linked task on the SAME row: a widget, and NO item left underneath
-    # it (the bug left the plain item there, causing overlapping titles).
+    # A linked task on the SAME reused row: still a widget, still no stale item
+    # (the bug left a plain item there, causing overlapping titles).
     window._populate_row(0, _linked())
     assert table.cellWidget(0, 1) is not None
     assert table.item(0, 1) is None
 
 
-def test_plain_title_after_linked_clears_widget(window):
+def test_plain_title_after_linked_stays_widget(window):
     table = window._table
     table.setRowCount(1)
 
     window._populate_row(0, _linked())
     assert table.cellWidget(0, 1) is not None
+    assert table.item(0, 1) is None
 
-    # Reverse transition: back to a plain task leaves an item and no widget.
+    # Reverse transition: back to a plain task — still a widget, no stale item.
     window._populate_row(0, _plain())
-    assert table.cellWidget(0, 1) is None
-    assert table.item(0, 1) is not None
+    assert table.cellWidget(0, 1) is not None
+    assert table.item(0, 1) is None

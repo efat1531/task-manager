@@ -9,7 +9,7 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import QApplication
 
 from controllers.task_controller import TaskController
@@ -63,11 +63,29 @@ def _set_windows_app_id() -> None:
         pass
 
 
+def _load_fonts() -> None:
+    """Register the bundled Barlow family so the UI matches the design.
+
+    Missing files degrade gracefully — the stylesheet's fallback stack (Segoe UI
+    etc.) applies. When Barlow loads, it becomes the app-wide default font.
+    """
+    fonts_dir = BASE_DIR / "assets" / "fonts"
+    loaded = False
+    for ttf in sorted(fonts_dir.glob("*.ttf")):
+        if QFontDatabase.addApplicationFont(str(ttf)) != -1:
+            loaded = True
+    if loaded and "Barlow" in QFontDatabase.families():
+        font = QFont("Barlow")
+        font.setPointSize(10)
+        QApplication.instance().setFont(font)
+
+
 def main() -> int:
     _set_windows_app_id()
     app = QApplication(sys.argv)
     app.setApplicationName("Task Manager")
     app.setApplicationVersion(APP_VERSION)
+    _load_fonts()
     if ICON_PATH.exists():
         app.setWindowIcon(QIcon(str(ICON_PATH)))
 

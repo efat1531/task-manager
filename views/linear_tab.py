@@ -12,15 +12,15 @@ controller and refreshes the task list.
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
     QCheckBox,
     QFormLayout,
-    QGroupBox,
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -32,6 +32,8 @@ from PySide6.QtWidgets import (
 from models.linear import LinearConfig
 from services import credentials, linear_settings
 from services.linear_client import LinearClient, LinearError
+from views.blueprint import BlueprintFrame
+from views.flow_layout import FlowLayout
 
 
 class _LinearWorker(QObject):
@@ -99,77 +101,71 @@ class LinearIntegrationTab(QWidget):
         self._worker: _LinearWorker | None = None
         # Per-state rows: state_id -> (checkbox, name).
         self._status_rows: dict[str, tuple[QCheckBox, str]] = {}
+        # Per-team rows: team_id -> (checkbox, {id, name, key}).
+        self._team_rows: dict[str, tuple[QCheckBox, dict]] = {}
+        # Exclude-label chip checkboxes, plus a flag so a save before any
+        # "Load statuses & labels" keeps the persisted selection.
+        self._label_checks: list[QCheckBox] = []
+        self._labels_loaded = False
         self._build_ui()
         self._load()
 
     # ---- UI --------------------------------------------------------------
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
         inner = QWidget()
         root = QVBoxLayout(inner)
+        root.setContentsMargins(18, 16, 18, 16)
+        root.setSpacing(14)
 
-        box = QGroupBox("Linear")
-        form = QFormLayout(box)
-
-        self._enabled = QCheckBox("Enable Linear integration")
-        form.addRow(self._enabled)
-
-        self._api_key = QLineEdit()
-        self._api_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self._api_key.setPlaceholderText("Personal API key (lin_api_…)")
-        form.addRow("API key", self._api_key)
-
-        self._poll = QSpinBox()
-        self._poll.setRange(1, 1440)
-        self._poll.setSuffix(" min")
-        form.addRow("Auto-sync every", self._poll)
-        root.addWidget(box)
-
-        # ---- teams -------------------------------------------------------
-        teams_box = QGroupBox("Teams")
-        teams_layout = QVBoxLayout(teams_box)
-        self._load_teams_btn = QPushButton("Load teams")
-        self._load_teams_btn.clicked.connect(lambda: self._start_worker("teams"))
-        teams_layout.addWidget(self._load_teams_btn)
-        self._teams_list = QListWidget()
-        self._teams_list.setMaximumHeight(120)
-        teams_layout.addWidget(self._teams_list)
-        self._load_meta_btn = QPushButton("Load statuses & labels for selected teams")
-        self._load_meta_btn.clicked.connect(self._on_load_meta)
-        teams_layout.addWidget(self._load_meta_btn)
-        root.addWidget(teams_box)
-
-        # ---- statuses ----------------------------------------------------
-        self._status_box = QGroupBox("Create tasks from these statuses")
-        self._status_form = QFormLayout(self._status_box)
-        self._status_hint = QLabel(
-            "Load statuses above, then tick each status you want to become tasks. "
-            "Each task takes its priority from the Linear ticket."
+        heading = QLabel("Linear")
+        heading.setObjectName("pageHeading")
+        subtitle = QLabel(
+            "Turn assigned Linear issues into tasks. The API key is stored in the OS "
+            "keyring — never in the app database."
         )
-        self._status_hint.setWordWrap(True)
-        self._status_hint.setEnabled(False)
-        self._status_form.addRow(self._status_hint)
-        root.addWidget(self._status_box)
+        subtitle.setObjectName("pageSubtitle")
+        subtitle.setWordWrap(True)
+        root.addWidget(heading)
+        root.addWidget(subtitle)
 
-        # ---- exclude labels ---------------------------------------------
-        labels_box = QGroupBox("Exclude issues with any of these labels")
-        labels_layout = QVBoxLayout(labels_box)
-        self._labels_list = QListWidget()
-        self._labels_list.setMaximumHeight(120)
-        labels_layout.addWidget(self._labels_list)
-        root.addWidget(labels_box)
+        # ---- two columns of blueprint panels, top-aligned ----------------
+        columns = QGridLayout()
+        columns.setHorizontalSpacing(18)
+        columns.setColumnStretch(0, 1)
+        columns.setColumnStretch(1, 1)
+
+        left = QVBoxLayout()
+        left.setSpacing(14)
+        left.addWidget(self._build_connection_panel())
+        left.addWidget(self._build_teams_panel())
+        left.addStretch(1)
+
+        right = QVBoxLayout()
+        right.setSpacing(14)
+        right.addWidget(self._build_statuses_panel())
+        right.addWidget(self._build_labels_panel())
+        right.addStretch(1)
+
+        columns.addLayout(left, 0, 0, Qt.AlignmentFlag.AlignTop)
+        columns.addLayout(right, 0, 1, Qt.AlignmentFlag.AlignTop)
+        root.addLayout(columns)
 
         # ---- buttons -----------------------------------------------------
         buttons = QHBoxLayout()
         self._save_btn = QPushButton("Save")
+        self._save_btn.setObjectName("primary")
         self._test_btn = QPushButton("Test connection")
         self._sync_btn = QPushButton("Sync now")
         self._save_btn.clicked.connect(self._on_save)
         self._test_btn.clicked.connect(lambda: self._start_worker("test"))
         self._sync_btn.clicked.connect(lambda: self.trigger_sync(auto=False))
         self._remove_btn = QPushButton("Remove integration")
+        self._remove_btn.setObjectName("danger")
         self._remove_btn.clicked.connect(self._on_remove)
         buttons.addWidget(self._save_btn)
         buttons.addWidget(self._test_btn)
@@ -179,6 +175,7 @@ class LinearIntegrationTab(QWidget):
         root.addLayout(buttons)
 
         self._status = QLabel("Not configured.")
+        self._status.setObjectName("statusStrip")
         self._status.setWordWrap(True)
         root.addWidget(self._status)
         root.addStretch(1)
@@ -186,14 +183,112 @@ class LinearIntegrationTab(QWidget):
         scroll.setWidget(inner)
         outer.addWidget(scroll)
 
+    # ---- panel builders --------------------------------------------------
+    def _build_connection_panel(self) -> BlueprintFrame:
+        """Left/top panel: enable switch + API key + poll interval."""
+        panel = BlueprintFrame()
+        self._enabled = QCheckBox("Enable Linear integration")
+        self._enabled.setObjectName("cardHeading")
+        panel.body.addWidget(self._enabled)
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(11)
+        self._api_key = QLineEdit()
+        self._api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._api_key.setPlaceholderText("Personal API key (lin_api_…)")
+        form.addRow("API key", self._api_key)
+
+        self._poll = QSpinBox()
+        self._poll.setRange(1, 1440)
+        self._poll.setFixedWidth(70)
+        poll_row = QHBoxLayout()
+        poll_row.setSpacing(8)
+        poll_row.addWidget(self._poll)
+        poll_suffix = QLabel("minutes, off the UI thread")
+        poll_suffix.setObjectName("mutedHint")
+        poll_row.addWidget(poll_suffix)
+        poll_row.addStretch(1)
+        form.addRow("Auto-sync every", poll_row)
+        panel.body.addLayout(form)
+        return panel
+
+    def _build_teams_panel(self) -> BlueprintFrame:
+        """Left/bottom panel: Teams header + Load teams, radio-dot rows, Load meta."""
+        panel = BlueprintFrame()
+        header = QHBoxLayout()
+        teams_title = QLabel("Teams")
+        teams_title.setObjectName("blueprintTitle")
+        header.addWidget(teams_title)
+        header.addStretch(1)
+        self._load_teams_btn = QPushButton("Load teams")
+        self._load_teams_btn.clicked.connect(lambda: self._start_worker("teams"))
+        header.addWidget(self._load_teams_btn)
+        panel.body.addLayout(header)
+
+        self._teams_layout = QVBoxLayout()
+        self._teams_layout.setSpacing(6)
+        self._teams_hint = QLabel("Load teams, then tick the ones to sync.")
+        self._teams_hint.setObjectName("mutedHint")
+        self._teams_layout.addWidget(self._teams_hint)
+        panel.body.addLayout(self._teams_layout)
+
+        self._load_meta_btn = QPushButton("Load statuses && labels for selected teams")
+        self._load_meta_btn.clicked.connect(self._on_load_meta)
+        panel.body.addWidget(self._load_meta_btn)
+        return panel
+
+    def _build_statuses_panel(self) -> BlueprintFrame:
+        """Right/top panel: which workflow statuses create tasks."""
+        panel = BlueprintFrame()
+        title = QLabel("Create tasks from these statuses")
+        title.setObjectName("blueprintTitle")
+        panel.body.addWidget(title)
+        self._status_hint = QLabel(
+            "Load statuses above, then tick each status you want to become tasks. "
+            "Each task takes its priority from the Linear ticket."
+        )
+        self._status_hint.setObjectName("mutedHint")
+        self._status_hint.setWordWrap(True)
+        panel.body.addWidget(self._status_hint)
+        self._status_layout = QVBoxLayout()
+        self._status_layout.setSpacing(9)
+        panel.body.addLayout(self._status_layout)
+        return panel
+
+    def _build_labels_panel(self) -> BlueprintFrame:
+        """Right/bottom panel: labels that exclude an issue, as wrapping chips."""
+        panel = BlueprintFrame()
+        title = QLabel("Exclude issues with any of these labels")
+        title.setObjectName("blueprintTitle")
+        panel.body.addWidget(title)
+        self._labels_hint = QLabel(
+            "Load statuses & labels above; ticked labels keep matching issues out."
+        )
+        self._labels_hint.setObjectName("mutedHint")
+        self._labels_hint.setWordWrap(True)
+        panel.body.addWidget(self._labels_hint)
+        self._labels_flow = FlowLayout(spacing=8)
+        panel.body.addLayout(self._labels_flow)
+        return panel
+
+    @staticmethod
+    def _clear_layout(layout) -> None:
+        """Remove and delete every widget/child layout from ``layout``."""
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+            elif item.layout() is not None:
+                LinearIntegrationTab._clear_layout(item.layout())
+
     # ---- status rows -----------------------------------------------------
     def _populate_status_rows(self, states: list[dict]) -> None:
         """Rebuild the status checkbox rows from fetched workflow states,
         preserving any existing selection from the saved config."""
         saved = {str(s["id"]): s for s in self.current_config().status_priorities}
-        # Clear previous rows (keep the hint at row 0).
-        while self._status_form.rowCount() > 1:
-            self._status_form.removeRow(1)
+        self._clear_layout(self._status_layout)
         self._status_rows.clear()
 
         for state in states:
@@ -201,53 +296,74 @@ class LinearIntegrationTab(QWidget):
             name = state.get("name", sid)
             if not sid:
                 continue
-            check = QCheckBox(name)
+            row = QWidget()
+            h = QHBoxLayout(row)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(8)
+            check = QCheckBox()
             if sid in saved:
                 check.setChecked(True)
-            self._status_form.addRow(check)
+            h.addWidget(check)
+            dot = QLabel()
+            dot.setFixedSize(9, 9)
+            fallback = self.palette().color(QPalette.ColorRole.Mid).name()
+            color = str(state.get("color") or "").strip() or fallback
+            dot.setStyleSheet(f"background:{color};border-radius:4px;")
+            h.addWidget(dot)
+            h.addWidget(QLabel(name))
+            h.addStretch(1)
+            self._status_layout.addWidget(row)
             self._status_rows[sid] = (check, name)
         self._status_hint.setVisible(not states)
 
     def _populate_labels(self, labels: list[str]) -> None:
         saved = set(self.current_config().exclude_labels)
-        self._labels_list.clear()
+        self._clear_layout(self._labels_flow)
+        self._label_checks.clear()
         for name in labels:
-            item = QListWidgetItem(name)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(
-                Qt.CheckState.Checked if name in saved else Qt.CheckState.Unchecked
-            )
-            self._labels_list.addItem(item)
+            chip = QCheckBox(name)
+            chip.setObjectName("blueprintChip")
+            chip.setChecked(name in saved)
+            self._labels_flow.addWidget(chip)
+            self._label_checks.append(chip)
+        self._labels_loaded = True
+        self._labels_hint.setVisible(not labels)
 
     def _populate_teams(self, teams: list[dict]) -> None:
         saved = set(self.current_config().team_ids)
-        self._teams_list.clear()
+        self._clear_layout(self._teams_layout)
+        self._team_rows.clear()
         for team in teams:
             tid = str(team.get("id", ""))
-            label = f"{team.get('name', tid)} ({team.get('key', '')})"
-            item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, tid)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(
-                Qt.CheckState.Checked if tid in saved else Qt.CheckState.Unchecked
-            )
-            self._teams_list.addItem(item)
+            name = str(team.get("name") or tid)
+            key = str(team.get("key") or "")
+            if not tid:
+                continue
+            label = f"{name} ({key})" if key else name
+            check = QCheckBox(label)
+            check.setChecked(tid in saved)
+            self._teams_layout.addWidget(check)
+            self._team_rows[tid] = (check, {"id": tid, "name": name, "key": key})
+        self._teams_hint = QLabel("Load teams, then tick the ones to sync.")
+        self._teams_hint.setObjectName("mutedHint")
+        self._teams_hint.setVisible(not teams)
+        self._teams_layout.addWidget(self._teams_hint)
 
     def _checked_team_ids(self) -> list[str]:
-        ids = []
-        for i in range(self._teams_list.count()):
-            item = self._teams_list.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
-                ids.append(str(item.data(Qt.ItemDataRole.UserRole)))
-        return ids
+        return [
+            tid for tid, (check, _meta) in self._team_rows.items()
+            if check.isChecked()
+        ]
+
+    def _checked_teams(self) -> list[dict]:
+        """Checked teams as ``{"id", "name", "key"}`` display metadata."""
+        return [
+            dict(meta) for _tid, (check, meta) in self._team_rows.items()
+            if check.isChecked()
+        ]
 
     def _checked_labels(self) -> list[str]:
-        names = []
-        for i in range(self._labels_list.count()):
-            item = self._labels_list.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
-                names.append(item.text())
-        return names
+        return [chip.text() for chip in self._label_checks if chip.isChecked()]
 
     def _status_priorities(self) -> list[dict]:
         rows = []
@@ -270,7 +386,12 @@ class LinearIntegrationTab(QWidget):
              for s in cfg.status_priorities]
         )
         self._populate_labels(cfg.exclude_labels)
-        self._populate_teams([{"id": t, "name": t, "key": ""} for t in cfg.team_ids])
+        # Prefer the saved team metadata (real names/keys); fall back to bare ids
+        # for configs saved before team names were persisted.
+        if cfg.teams:
+            self._populate_teams(cfg.teams)
+        else:
+            self._populate_teams([{"id": t, "name": t, "key": ""} for t in cfg.team_ids])
         self._refresh_status(cfg)
 
     def current_config(self) -> LinearConfig:
@@ -282,13 +403,15 @@ class LinearIntegrationTab(QWidget):
         """
         stored = linear_settings.load_config()
         team_ids = self._checked_team_ids() or stored.team_ids
+        teams = self._checked_teams() or stored.teams
         status_priorities = self._status_priorities() or stored.status_priorities
         exclude_labels = (
-            self._checked_labels() if self._labels_list.count() else stored.exclude_labels
+            self._checked_labels() if self._labels_loaded else stored.exclude_labels
         )
         return LinearConfig(
             enabled=self._enabled.isChecked(),
             team_ids=team_ids,
+            teams=teams,
             poll_minutes=self._poll.value(),
             status_priorities=status_priorities,
             exclude_labels=exclude_labels,
@@ -349,8 +472,9 @@ class LinearIntegrationTab(QWidget):
     def _reset_form(self) -> None:
         self._enabled.setChecked(False)
         self._poll.setValue(15)
-        self._teams_list.clear()
-        self._labels_list.clear()
+        self._labels_loaded = False
+        self._populate_teams([])
+        self._populate_labels([])
         self._populate_status_rows([])
         self._api_key.clear()
         self._api_key.setPlaceholderText("Personal API key (lin_api_…)")
