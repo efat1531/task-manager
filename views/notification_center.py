@@ -1,9 +1,9 @@
-"""Notification bell + slide-in panel — a visual shell (no real backend).
+"""Notification bell + slide-in panel, backed by the persisted feed.
 
-This reproduces the design mockup's notification affordance: a bell button in
-the header with an unread badge, and a pop-over panel listing recent alerts.
-The items here are static placeholders; wiring them to real events would be a
-follow-up that adds a notifications model/controller. Presentation only.
+A bell button in the header shows an unread badge; clicking it opens a pop-over
+listing recent notifications read from the controller. Marking all read persists
+via the controller, and :meth:`NotificationBell.refresh_from_feed` re-reads the
+unread count after a sync or reminder tick.
 """
 from __future__ import annotations
 
@@ -20,32 +20,33 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from models.notification import (
+    KIND_LINEAR,
+    KIND_PR,
+    KIND_REMINDER,
+    KIND_SYNC,
+    relative_time,
+)
 from views import icons, theme
 
-# Static sample feed (kind, title, time, body, unread) for the shell.
-_SAMPLE = [
-    ("pr", "PR #482 needs your review", "2m", "auth refactor · Contoso / webapp", True),
-    ("sync", "Azure sync complete", "14m", "2 created · 1 completed", True),
-    ("reminder", "Task due today", "1h", "Write release notes for v2.3.0", True),
-    ("schedule", "Recurring task generated", "3h", "Daily standup notes", False),
-]
 _KIND_ICON = {
-    "pr": icons.PR,
-    "sync": icons.SYNC,
-    "reminder": icons.REMINDER,
-    "schedule": icons.SCHEDULE,
+    KIND_PR: icons.PR,
+    KIND_SYNC: icons.SYNC,
+    KIND_REMINDER: icons.REMINDER,
+    KIND_LINEAR: icons.SCHEDULE,
 }
 
 
 class _Panel(QFrame):
-    """Frameless pop-over listing recent notifications."""
+    """Frameless pop-over listing recent notifications from the feed."""
 
-    def __init__(self, dark: bool, parent=None) -> None:
+    def __init__(self, controller, dark: bool, parent=None) -> None:
         super().__init__(parent, Qt.WindowType.Popup)
+        self._controller = controller
         self._dark = dark
         self.setObjectName("notifPanel")
         self.setFixedWidth(352)
-        self._items = list(_SAMPLE)
+        self._items = controller.list_notifications(50)
         self._dots: list[QLabel] = []
         self._build()
 
@@ -61,7 +62,7 @@ class _Panel(QFrame):
         hrow.setContentsMargins(14, 11, 10, 11)
         title = QLabel("Notifications")
         title.setObjectName("notifPanelTitle")
-        unread = sum(1 for *_, u in self._items if u)
+        unread = sum(1 for n in self._items if not n.read)
         self._count = QLabel(f"{unread} unread")
         self._count.setObjectName("dayCaption")
         count = self._count
@@ -88,12 +89,31 @@ class _Panel(QFrame):
         self._list = QVBoxLayout(body)
         self._list.setContentsMargins(0, 0, 0, 0)
         self._list.setSpacing(0)
-        for kind, ttl, when, text, is_unread in self._items:
-            self._list.addWidget(self._make_item(kind, ttl, when, text, is_unread))
+        if self._items:
+            for n in self._items:
+                self._list.addWidget(
+                    self._make_item(
+                        n.kind, n.title, relative_time(n.created_at),
+                        n.body, not n.read,
+                    )
+                )
+        else:
+            self._list.addWidget(self._make_empty())
         self._list.addStretch(1)
         scroll.setWidget(body)
-        scroll.setMinimumHeight(min(84 * len(self._items) + 8, 380))
+        scroll.setMinimumHeight(min(84 * max(1, len(self._items)) + 8, 380))
         outer.addWidget(scroll)
+
+    def _make_empty(self) -> QWidget:
+        row = QFrame()
+        row.setObjectName("notifItem")
+        r = QVBoxLayout(row)
+        r.setContentsMargins(14, 22, 14, 22)
+        msg = QLabel("No notifications yet")
+        msg.setObjectName("notifItemBody")
+        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        r.addWidget(msg)
+        return row
 
     def _make_item(self, kind, ttl, when, text, is_unread) -> QWidget:
         accent = QColor(theme.token("accent", self._dark))
@@ -137,25 +157,27 @@ class _Panel(QFrame):
         return row
 
     def _mark_all_read(self) -> None:
+        self._controller.mark_notifications_read()
         for dot in self._dots:
             dot.hide()
         self._count.setText("0 unread")
         parent = self.parent()
         if isinstance(parent, NotificationBell):
-            parent.set_unread(0)
+            parent.refresh_from_feed()
 
 
 class NotificationBell(QToolButton):
     """Header bell button with an unread badge; opens the notifications panel."""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, controller, parent=None) -> None:
         super().__init__(parent)
+        self._controller = controller
         self.setObjectName("bell")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("Notifications")
         self.setFixedSize(30, 26)
         self._dark = False
-        self._unread = sum(1 for *_, u in _SAMPLE if u)
+        self._unread = controller.unread_notification_count()
 
         self._badge = QLabel(self)
         self._badge.setObjectName("notifBadge")
@@ -173,8 +195,9 @@ class NotificationBell(QToolButton):
             self._panel.close()
             self._panel = None
 
-    def set_unread(self, n: int) -> None:
-        self._unread = max(0, n)
+    def refresh_from_feed(self) -> None:
+        """Re-read the unread count from the feed (after a sync / reminder tick)."""
+        self._unread = self._controller.unread_notification_count()
         self._sync_badge()
 
     def _sync_badge(self) -> None:
@@ -195,7 +218,7 @@ class NotificationBell(QToolButton):
             self._panel.close()
             self._panel = None
             return
-        self._panel = _Panel(self._dark, self)
+        self._panel = _Panel(self._controller, self._dark, self)
         pos = self.mapToGlobal(QPoint(self.width() - self._panel.width(), self.height() + 6))
         self._panel.move(pos)
         self._panel.show()
