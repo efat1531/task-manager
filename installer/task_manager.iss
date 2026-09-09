@@ -4,9 +4,11 @@
 ; %LocalAppData%\Programs\TaskManager, creates Start Menu + (optional) Desktop
 ; shortcuts, and registers a per-user Add/Remove Programs entry.
 ;
-; Because the install directory is user-writable, the app's in-app auto-updater
-; (which swaps TaskManager.exe in place — see services/updater.py) keeps working
-; unchanged; no elevation is ever required.
+; The app's in-app auto-updater detects an installed build from this installer's
+; uninstall registry key (AppId below) and updates by re-running this installer
+; silently — see services/updater.py. That keeps the Add/Remove Programs version and
+; uninstaller in sync, and works for both the per-user default location (no
+; elevation) and an all-users install under Program Files (one UAC prompt).
 ;
 ; Build (from the repo root, after `pyinstaller task_manager.spec`):
 ;   iscc /DAppVersion=1.4.1 installer\task_manager.iss
