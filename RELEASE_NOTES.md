@@ -1,28 +1,14 @@
-# Task Manager v2.1.0
+# Task Manager v2.1.1
 
-This release makes the app **actually notify you** — a real notification center with
-desktop alerts, a working bell menu, and settings that persist — and simplifies
-distribution to a single **portable `TaskManager.exe`**. Your data is untouched:
-every task, schedule, and integration link carries straight over.
-
-## ✨ New — Notification center
-
-- **Desktop notifications, on an ongoing basis.** Reminders for **due-today** and
-  **overdue** tasks now fire beyond startup (re-checked periodically, de-duplicated so
-  the same task won't nag you twice a day). Syncs also alert you to **Azure PR events**
-  (assigned for review, a new comment on your PR, changes requested) and **Linear
-  issues** that become tasks.
-- **The bell menu is real now.** The header bell shows an actual, persisted feed with
-  an unread badge; **Mark all read** sticks across restarts.
-- **A Notifications settings tab that works.** A master switch, per-source toggles,
-  quiet hours, and a sound preference all **persist** and **gate** what gets delivered,
-  and **Send a test notification** fires a real desktop toast.
+A small build maintenance release. No feature or data changes — every task,
+schedule, and integration link carries straight over.
 
 ## 🔧 Changes
 
-- **Distribution is now the portable `TaskManager.exe` only** — the
-  `TaskManager-Setup.exe` installer has been retired. Builds already installed via the
-  old installer keep auto-updating automatically (they swap the exe in place).
+- **Portable `TaskManager.exe` is no longer UPX-packed.** Packed executables trip
+  extra antivirus, SmartScreen, and Smart App Control heuristics, which was blocking
+  v2.1.0 on some machines. The exe is a little larger now but trips fewer flags on
+  first run.
 
 ## 📦 Install
 
@@ -31,6 +17,7 @@ every task, schedule, and integration link carries straight over.
   itself up to date.
 
 > Note: the app is not code-signed, so Windows SmartScreen (or Smart App Control) may
-> warn on first run — choose **More info → Run anyway**.
+> still warn on first run — choose **More info → Run anyway**. Under Smart App Control
+> a fresh unsigned build can be blocked outright until it earns cloud reputation.
 
 **Full changelog** is appended below.
