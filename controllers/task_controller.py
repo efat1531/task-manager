@@ -5,11 +5,24 @@ Holds no Qt imports so its logic stays unit-testable without a display.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from typing import Callable, List, Optional, Set, Tuple
 
 from models import linkify
 from models.integration import AzureConfig, PullRequest, pr_key, pr_to_task_fields
+from models.notification import (
+    KIND_LINEAR,
+    KIND_PR,
+    KIND_REMINDER,
+    SOURCE_AZURE_COMMENT,
+    SOURCE_AZURE_REVIEW,
+    SOURCE_AZURE_VOTE,
+    SOURCE_LINEAR,
+    SOURCE_TASK_DUE,
+    SOURCE_TASK_OVERDUE,
+    Notification,
+    NotificationEvent,
+)
 from models.linear import (
     LinearConfig,
     LinearIssue,
@@ -28,6 +41,10 @@ class TaskController:
         self._repo = repository
         # Each entry: (human label, callable that reverses the action).
         self._undo_stack: List[Tuple[str, Callable[[], None]]] = []
+        # Newly-recorded feed events awaiting OS delivery. The controller only
+        # records + buffers (no Qt/notifier); the view drains this and fires the
+        # gated OS toasts. Reconcile return values are deliberately unchanged.
+        self._pending_events: List[NotificationEvent] = []
 
     def list_tasks(self, order_by: str = "sort_order") -> List[Task]:
         return self._repo.list(order_by=order_by)
@@ -91,6 +108,67 @@ class TaskController:
         overdue = [t for t in tasks if t.is_overdue]
         due_today = [t for t in tasks if t.is_due_today]
         return overdue, due_today
+
+    # ---- notifications ---------------------------------------------------
+    def record_notification(
+        self,
+        kind: str,
+        title: str,
+        body: str = "",
+        source: Optional[str] = None,
+        dedup_key: Optional[str] = None,
+    ) -> Optional[Notification]:
+        """Persist a feed entry (de-duped by ``dedup_key``). If it was actually
+        inserted and a ``source`` is given, buffer a matching event for the view
+        to consider for OS delivery. Returns the row, or None if de-duped."""
+        saved = self._repo.add_notification(
+            Notification(kind=kind, title=title, body=body, dedup_key=dedup_key)
+        )
+        if saved is not None and source is not None:
+            self._pending_events.append(
+                NotificationEvent(
+                    source=source, kind=kind, title=title,
+                    body=body, dedup_key=dedup_key,
+                )
+            )
+        return saved
+
+    def drain_notification_events(self) -> List[NotificationEvent]:
+        """Return and clear the buffered events recorded since the last drain."""
+        events = self._pending_events
+        self._pending_events = []
+        return events
+
+    def list_notifications(self, limit: int = 50) -> List[Notification]:
+        return self._repo.list_notifications(limit)
+
+    def unread_notification_count(self) -> int:
+        return self._repo.count_unread_notifications()
+
+    def mark_notifications_read(self) -> None:
+        self._repo.mark_all_notifications_read()
+
+    def record_reminders(self, today: Optional[str] = None) -> List[NotificationEvent]:
+        """Record due-today / overdue reminders and return the new events.
+
+        The ``dedup_key`` embeds today's date so a given task fires at most once
+        per day per state, yet re-fires after midnight (the ``today`` argument
+        keeps this testable without faking the clock)."""
+        today = today or date.today().isoformat()
+        overdue, due_today = self.reminders()
+        for task in due_today:
+            self.record_notification(
+                kind=KIND_REMINDER, source=SOURCE_TASK_DUE,
+                title="Task due today", body=task.title,
+                dedup_key=f"reminder:due:{task.id}:{today}",
+            )
+        for task in overdue:
+            self.record_notification(
+                kind=KIND_REMINDER, source=SOURCE_TASK_OVERDUE,
+                title="Overdue task", body=task.title,
+                dedup_key=f"reminder:overdue:{task.id}:{today}",
+            )
+        return self.drain_notification_events()
 
     def create_task(
         self,
@@ -287,6 +365,14 @@ class TaskController:
                 self._repo.link_pr(key, task.id)
                 task_id = task.id
                 created += 1
+                # A brand-new review-source task means the user was just added as
+                # a reviewer — notify once per PR.
+                if source == "review":
+                    self.record_notification(
+                        kind=KIND_PR, source=SOURCE_AZURE_REVIEW,
+                        title=f"PR #{pr.pr_id} needs your review", body=pr.title,
+                        dedup_key=f"azurepr:review:{organization}:{pr.pr_id}",
+                    )
             # Refresh authored-PR tasks every sync so they follow the PR's state
             # (a no-op if the task was since deleted):
             #  - while comments are open the unresolved count pins the task as
@@ -304,6 +390,26 @@ class TaskController:
                     else:
                         new_priority = (config or AzureConfig()).priority_author
                         unresolved = pr.unresolved_comment_count
+                    # Detect state transitions against the task's stored values
+                    # *before* we overwrite them below.
+                    if (
+                        not pr.is_waiting_for_author
+                        and pr.unresolved_comment_count > task.unresolved_comments
+                    ):
+                        self.record_notification(
+                            kind=KIND_PR, source=SOURCE_AZURE_COMMENT,
+                            title="New comment on your PR", body=pr.title,
+                            dedup_key=(
+                                f"azurepr:comment:{organization}:{pr.pr_id}:"
+                                f"{pr.unresolved_comment_count}"
+                            ),
+                        )
+                    if pr.is_waiting_for_author and task.priority != Priority.LOW:
+                        self.record_notification(
+                            kind=KIND_PR, source=SOURCE_AZURE_VOTE,
+                            title="Changes requested on your PR", body=pr.title,
+                            dedup_key=f"azurepr:vote:{organization}:{pr.pr_id}:waiting",
+                        )
                     changed = False
                     if task.priority != new_priority:
                         task.priority = new_priority
@@ -438,6 +544,11 @@ class TaskController:
                 task = self.create_task(**fields)
                 self._repo.link_pr(key, task.id)
                 created += 1
+                self.record_notification(
+                    kind=KIND_LINEAR, source=SOURCE_LINEAR,
+                    title="Linear issue became a task", body=issue.title,
+                    dedup_key=f"linear:new:{issue.id}",
+                )
 
         # Auto-complete tasks for issues that are no longer eligible.
         for key, task_id in existing.items():

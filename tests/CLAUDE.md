@@ -1,6 +1,6 @@
 # tests/ — pytest suite
 
-Run from the project root: `pytest` (currently **139 tests**, ~0.3s). Each test
+Run from the project root: `pytest` (currently **172 tests**, ~0.9s). Each test
 module prepends the repo root to `sys.path`, so no install/packaging is needed.
 
 | File | Covers |
@@ -12,6 +12,7 @@ module prepends the repo root to `sys.path`, so no install/packaging is needed.
 | `test_export_logic.py` | Per-day JSON export scoping + serialization. |
 | `test_updater_logic.py` | Version compare / asset pick / release parsing (no network). |
 | `test_linkify_and_pinning.py` | `linkify` helpers + unresolved-comment pinning. |
+| `test_notification_logic.py` | Notification feed CRUD/dedup, reminder + sync event recording, `NotificationConfig` gating/quiet-hours, `relative_time`. |
 | `test_row_ordering_and_reorder.py` | `order_rows` merge/sort + manual reorder (logic, no Qt). |
 | `test_title_cell_rendering.py` | Title-cell rendering — **the only test that needs `pytest-qt`/`qtbot`**. |
 

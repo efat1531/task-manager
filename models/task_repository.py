@@ -9,6 +9,7 @@ import sqlite3
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from models.notification import Notification
 from models.schedule import Frequency, Schedule
 from models.task import Priority, Task
 
@@ -54,6 +55,21 @@ CREATE TABLE IF NOT EXISTS pr_links (
     task_id    INTEGER NOT NULL,
     created_at TEXT    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind       TEXT    NOT NULL,           -- icon bucket: 'pr'|'linear'|'reminder'|'sync'
+    title      TEXT    NOT NULL,
+    body       TEXT    NOT NULL DEFAULT '',
+    created_at TEXT    NOT NULL,           -- ISO datetime
+    read       INTEGER NOT NULL DEFAULT 0,
+    dedup_key  TEXT                        -- stable key; NULL = never de-duped
+);
+
+-- Partial unique index: the de-dup engine. NULL dedup_keys never collide, so an
+-- ``INSERT OR IGNORE`` only skips a genuine repeat of the same keyed event.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_notifications_dedup
+    ON notifications(dedup_key) WHERE dedup_key IS NOT NULL;
 """
 
 # Column order used by _row_to_task / SELECT statements.
@@ -371,16 +387,77 @@ class TaskRepository:
         self._conn.commit()
 
     # ---- reset -----------------------------------------------------------
+    # ---- notifications ---------------------------------------------------
+    @staticmethod
+    def _row_to_notification(row: sqlite3.Row) -> Notification:
+        return Notification(
+            id=row["id"],
+            kind=row["kind"],
+            title=row["title"],
+            body=row["body"],
+            created_at=row["created_at"],
+            read=bool(row["read"]),
+            dedup_key=row["dedup_key"],
+        )
+
+    def add_notification(self, notification: Notification) -> Optional[Notification]:
+        """Insert a feed entry. Returns it (with id) or None if its ``dedup_key``
+        already existed — repeat keyed events are silently skipped."""
+        cur = self._conn.execute(
+            """INSERT OR IGNORE INTO notifications
+                   (kind, title, body, created_at, read, dedup_key)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (notification.kind, notification.title, notification.body,
+             notification.created_at, int(notification.read),
+             notification.dedup_key),
+        )
+        self._conn.commit()
+        if cur.rowcount == 0:  # dedup_key collided → nothing inserted
+            return None
+        notification.id = cur.lastrowid
+        return notification
+
+    def list_notifications(self, limit: int = 50) -> List[Notification]:
+        """Return the most recent notifications, newest first."""
+        rows = self._conn.execute(
+            "SELECT id, kind, title, body, created_at, read, dedup_key "
+            "FROM notifications ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [self._row_to_notification(r) for r in rows]
+
+    def count_unread_notifications(self) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM notifications WHERE read = 0"
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
+    def mark_all_notifications_read(self) -> None:
+        self._conn.execute("UPDATE notifications SET read = 1 WHERE read = 0")
+        self._conn.commit()
+
+    def prune_notifications(self, keep: int = 200) -> None:
+        """Cap the feed at ``keep`` most-recent rows so it can't grow unbounded."""
+        self._conn.execute(
+            """DELETE FROM notifications WHERE id NOT IN (
+                   SELECT id FROM notifications ORDER BY id DESC LIMIT ?
+               )""",
+            (keep,),
+        )
+        self._conn.commit()
+
     def reset(self) -> None:
         """Delete every row from every table, emptying the database.
 
-        Clears tasks, schedules, their per-day overrides, and all external
-        (Azure/Linear) PR links, then resets the AUTOINCREMENT counters so ids
-        start over from 1. The schema itself is left in place.
+        Clears tasks, schedules, their per-day overrides, all external
+        (Azure/Linear) PR links, and the notification feed, then resets the
+        AUTOINCREMENT counters so ids start over from 1. The schema itself is
+        left in place.
         """
         with self._conn:  # commits on success, rolls back on error
             self._conn.execute("DELETE FROM schedule_overrides")
             self._conn.execute("DELETE FROM pr_links")
+            self._conn.execute("DELETE FROM notifications")
             self._conn.execute("DELETE FROM schedules")
             self._conn.execute("DELETE FROM tasks")
             # sqlite_sequence only exists once an AUTOINCREMENT table has grown;

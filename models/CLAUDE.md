@@ -5,6 +5,7 @@ Pure Python, headlessly testable. No Qt imports, no network. See root `CLAUDE.md
 | File | Purpose |
 |------|---------|
 | `task.py` | `Task` dataclass + `Priority` IntEnum (Low/Medium/High/Urgent) + overdue logic. |
+| `notification.py` | `Notification` (feed row) + transient `NotificationEvent` + `NotificationConfig` (gating: `should_notify`/`in_quiet_hours`) + `relative_time`; `SOURCE_*`/`KIND_*` constants. Qt-free. |
 | `schedule.py` | `Schedule` / `Occurrence` dataclasses, `Frequency` enum, `occurs_on(schedule, day)` recurrence rule (daily/weekly-by-weekday/monthly). |
 | `integration.py` | Azure `AzureConfig` / `PullRequest`; `pr_key(org, id, source)` → `"{source}:{org}:{id}"`; `pr_to_task_fields` PR→task mapping. |
 | `linear.py` | `LinearConfig` / `LinearIssue`; `linear_key(id)` → `"linear:{id}"`; `filter_excluded`, `issue_to_task_fields` (per-status priority). |

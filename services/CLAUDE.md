@@ -10,6 +10,7 @@ QSettings persistence. (May import Qt for `QSettings` — that's fine here.)
 | `linear_client.py` | `LinearClient` — Linear GraphQL over stdlib `urllib`; raises `LinearError`. |
 | `updater.py` | Self-update: `check_for_update`, `parse_version`/`is_newer`, `parse_release`, asset pick, download + self-replace helper `.bat`. |
 | `notifier.py` | `notify()` desktop notifications via `plyer` (`notifications_available()` guard). |
+| `notification_settings.py` | `NotificationConfig` (master switch, per-source toggles, sound, quiet hours) in `QSettings` (`load/save/clear_config`). |
 | `integration_settings.py` | Azure non-secret config in `QSettings` (`load/save/clear_config`). |
 | `linear_settings.py` | Linear non-secret config in `QSettings`. |
 

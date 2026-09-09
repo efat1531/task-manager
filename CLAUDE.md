@@ -72,7 +72,8 @@ pyinstaller task_manager.spec     # build dist\TaskManager.exe
 Bump `APP_VERSION` in `version.py` **and** edit `RELEASE_NOTES.md` in the same
 commit, then tag `v<APP_VERSION>` and push the tag. CI
 (`.github/workflows/release.yml`) **asserts the tag equals `v` + APP_VERSION**, runs
-tests, builds the exe + Inno Setup installer, and publishes the GitHub Release.
+tests, builds the portable `TaskManager.exe`, and publishes the GitHub Release.
+Distribution is the portable exe only — there is no installer.
 
 ## Gotchas
 

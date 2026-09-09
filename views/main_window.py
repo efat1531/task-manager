@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+from datetime import datetime
 
 from PySide6.QtCore import QDate, Qt, QTimer
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
@@ -29,7 +30,7 @@ from controllers.task_controller import TaskController
 from models import linkify
 from models.schedule import Occurrence
 from models.task import Task
-from services import notifier
+from services import notification_settings, notifier
 from version import (
     APP_AUTHOR,
     APP_CONTACT_EMAIL,
@@ -68,7 +69,7 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._apply_theme()
         self.refresh()
-        self._prompt_reminders()
+        self._check_reminders(startup=True)
 
         # Auto-update: show the changelog once after an update, then quietly
         # check GitHub for a newer release in the background.
@@ -144,6 +145,13 @@ class MainWindow(QMainWindow):
         self._countdown_timer.start(1000)
         self._update_sync_countdown()
 
+        # Periodically re-check for due/overdue tasks so reminders keep firing
+        # beyond startup (and pick up the midnight rollover). Daily de-dup keys
+        # keep this from re-notifying the same task within a day.
+        self._reminder_timer = QTimer(self)
+        self._reminder_timer.timeout.connect(self._check_reminders)
+        self._reminder_timer.start(15 * 60_000)  # every 15 minutes
+
     def _build_menu(self) -> None:
         """Menu bar: a Data menu for maintenance and a Help menu."""
         # "&" keeps Alt+D / Alt+H navigation; the accelerator underline under the
@@ -167,7 +175,7 @@ class MainWindow(QMainWindow):
         corner_row = QHBoxLayout(corner)
         corner_row.setContentsMargins(0, 0, 0, 0)
         corner_row.setSpacing(10)
-        self._bell = NotificationBell(self)
+        self._bell = NotificationBell(self._controller, self)
         version_tag = QLabel(f"v{APP_VERSION}")
         version_tag.setObjectName("versionTag")
         corner_row.addWidget(self._bell)
@@ -806,6 +814,7 @@ class MainWindow(QMainWindow):
         self._start_poll_timer()  # pick up any interval/enabled change
         self._update_sync_countdown()
         self.refresh()
+        self._deliver_events(self._controller.drain_notification_events())
 
     def _auto_sync(self) -> None:
         self._integration_tab.trigger_sync(auto=True)
@@ -898,6 +907,7 @@ class MainWindow(QMainWindow):
         self._start_linear_poll_timer()  # pick up any interval/enabled change
         self._update_sync_countdown()
         self.refresh()
+        self._deliver_events(self._controller.drain_notification_events())
 
     def _auto_sync_linear(self) -> None:
         self._linear_tab.trigger_sync(auto=True)
@@ -942,21 +952,37 @@ class MainWindow(QMainWindow):
         self._apply_theme()
         self.refresh()  # re-tint overdue rows for the new palette
 
-    # ---- reminders -------------------------------------------------------
-    def _prompt_reminders(self) -> None:
-        """On startup, surface overdue / due-today tasks via a notification."""
-        overdue, due_today = self._controller.reminders()
-        if not overdue and not due_today:
-            return
-        parts = []
-        if overdue:
-            parts.append(f"{len(overdue)} overdue")
-        if due_today:
-            parts.append(f"{len(due_today)} due today")
-        message = " · ".join(parts)
-        notifier.notify("Task reminders", message)
-        self._status.setText(f"Reminders: {message}")
-        self._show_reminder_toast(message)
+    # ---- reminders + notification delivery -------------------------------
+    def _deliver_events(self, events) -> None:
+        """Fire an OS toast for each buffered event its settings allow, then
+        refresh the bell. The feed row is already recorded either way, so the
+        bell reflects everything even when OS delivery is muted / in quiet hours.
+        """
+        cfg = notification_settings.load_config()
+        now = datetime.now()
+        for ev in events:
+            if cfg.should_notify(ev.source, now):
+                notifier.notify(ev.title, ev.body)
+        self._bell.refresh_from_feed()
+
+    def _check_reminders(self, startup: bool = False) -> None:
+        """Record due/overdue reminders and deliver any that are newly due.
+
+        Runs at startup and on the reminder timer. On startup, also show the
+        in-window summary toast for a quick at-a-glance recap.
+        """
+        self._deliver_events(self._controller.record_reminders())
+        if startup:
+            overdue, due_today = self._controller.reminders()
+            if overdue or due_today:
+                parts = []
+                if overdue:
+                    parts.append(f"{len(overdue)} overdue")
+                if due_today:
+                    parts.append(f"{len(due_today)} due today")
+                message = " · ".join(parts)
+                self._status.setText(f"Reminders: {message}")
+                self._show_reminder_toast(message)
 
     # ---- in-window reminder toast ---------------------------------------
     def _show_reminder_toast(self, message: str) -> None:
