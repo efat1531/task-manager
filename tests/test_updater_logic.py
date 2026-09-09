@@ -17,6 +17,7 @@ from services import updater  # noqa: E402
 from services.updater import (  # noqa: E402
     UpdateError,
     _pick_asset,
+    _pick_setup_asset,
     is_newer,
     parse_release,
     parse_version,
@@ -73,6 +74,28 @@ def test_pick_asset_none_when_no_exe():
     assert _pick_asset([{"name": "readme.md", "browser_download_url": "u"}]) == (None, None)
 
 
+def test_pick_asset_fallback_skips_the_installer():
+    # The .exe fallback must never return the installer — the portable path swaps a
+    # raw exe in place, so it has to stay the portable build.
+    assets = [{"name": "TaskManager-Setup.exe", "browser_download_url": "setup", "size": 9}]
+    assert _pick_asset(assets) == (None, None)
+
+
+# ---- _pick_setup_asset --------------------------------------------------------
+def test_pick_setup_asset_selects_installer():
+    assets = [
+        {"name": "TaskManager.exe", "browser_download_url": "exe", "size": 1},
+        {"name": "TaskManager-Setup.exe", "browser_download_url": "setup", "size": 2},
+    ]
+    assert _pick_setup_asset(assets) == ("setup", 2)
+
+
+def test_pick_setup_asset_none_without_installer():
+    # Exact-name only: it must not fall back to the portable exe.
+    assets = [{"name": "TaskManager.exe", "browser_download_url": "exe", "size": 1}]
+    assert _pick_setup_asset(assets) == (None, None)
+
+
 # ---- parse_release ------------------------------------------------------------
 def _release(tag: str) -> dict:
     return {
@@ -81,6 +104,8 @@ def _release(tag: str) -> dict:
         "draft": False,
         "assets": [
             {"name": "TaskManager.exe", "browser_download_url": "https://x/exe", "size": 42},
+            {"name": "TaskManager-Setup.exe", "browser_download_url": "https://x/setup",
+             "size": 99},
         ],
     }
 
@@ -92,6 +117,28 @@ def test_parse_release_returns_info_when_newer():
     assert info.download_url == "https://x/exe"
     assert info.size == 42
     assert "Changes" in info.notes
+
+
+def test_parse_release_captures_installer_asset():
+    # Both the portable exe (for the in-place swap) and the installer (for installed
+    # builds) must be picked out of the same release payload.
+    info = parse_release(_release("v1.3.0"), "1.2.0")
+    assert info is not None
+    assert info.download_url == "https://x/exe"      # portable, unchanged
+    assert info.setup_url == "https://x/setup"
+    assert info.setup_size == 99
+
+
+def test_parse_release_setup_none_when_installer_absent():
+    payload = _release("v1.3.0")
+    payload["assets"] = [
+        {"name": "TaskManager.exe", "browser_download_url": "https://x/exe", "size": 42},
+    ]
+    info = parse_release(payload, "1.2.0")
+    assert info is not None
+    assert info.download_url == "https://x/exe"
+    assert info.setup_url is None
+    assert info.setup_size is None
 
 
 def test_parse_release_none_when_not_newer():
@@ -130,6 +177,24 @@ def test_write_helper_bat_swaps_by_rename(tmp_path):
     assert "4242" in script
     # Guard against a regression to the old blind overwrite-then-launch.
     assert f'move /Y "{new_exe}" "{target}" >nul\nstart' not in script
+
+
+def test_write_installer_bat_reruns_setup_silently(tmp_path):
+    # An installed build must update by re-running the installer silently, then
+    # relaunch the app via explorer.exe so it drops back to normal integrity.
+    setup_exe = tmp_path / "TaskManager-Setup.exe"
+    install_dir = tmp_path / "Programs" / "TaskManager"
+    bat = updater._write_installer_bat(tmp_path, setup_exe, install_dir, 4242)
+    assert bat.exists()
+    script = bat.read_text(encoding="utf-8")
+
+    # Waits for the running process to exit first.
+    assert "4242" in script
+    # Runs the installer silently, pinned to the current install directory.
+    assert f'"{setup_exe}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="{install_dir}"' \
+        in script
+    # Relaunches the installed exe through Explorer (normal integrity), not `start`.
+    assert f'explorer.exe "{install_dir / "TaskManager.exe"}"' in script
 
 
 # ---- check_for_update_strict (monkeypatched network) --------------------------

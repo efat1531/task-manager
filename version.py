@@ -8,7 +8,7 @@ commit ``v<APP_VERSION>`` (the release workflow asserts the two match).
 """
 from __future__ import annotations
 
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.0.1"
 
 #: Human-facing metadata surfaced in the Help → About box. Kept here so the UI
 #: imports them from the same single source as the version.

@@ -1,42 +1,26 @@
-# Task Manager v2.0.0
+# Task Manager v2.0.1
 
-A **complete visual redesign**. Task Manager moves to the flat, square
-"blueprint" look — a slate-blue accent, hairline dividers, and the bundled
-**Barlow** type family — and gains a notification center, in-window reminder
-toasts, and a friendlier task list. Nothing about your data changes; every task,
-schedule, and integration link carries straight over.
-
-## ✨ What's new
-
-- **Brand-new interface.** A cohesive light/dark theme built from a single set of
-  design tokens: flat surfaces, crisp dividers, a slate-blue accent, and custom
-  themed icons throughout. Dark mode was rebuilt to match.
-- **Bundled Barlow font.** The app now ships and uses the Barlow / Barlow
-  Condensed fonts, so it looks the same on every machine. If they can't load, it
-  falls back cleanly to Segoe UI.
-- **Notification center.** A bell in the header with an unread badge and a
-  slide-in panel of recent alerts, plus a new **Notifications** tab for choosing
-  which events notify you and how.
-- **In-window reminder toasts.** Task reminders now also appear as a dismissible
-  card in the corner of the window, mirroring the desktop notification.
-- **Clearer task list.**
-  - Priority now shows as a **coloured badge** (Urgent / High / Medium / Low).
-  - Each row has a **checkbox** — tick it to complete or reopen a task in place.
-  - A drag handle on every row makes manual reordering more discoverable.
-- **Redesigned task editor.** Priority is now a **segmented control** instead of a
-  dropdown, so all four levels are visible at a glance.
-- **Refreshed integration tabs.** The Azure DevOps and Linear settings are laid
-  out in "blueprint" panels, and Linear's exclude-labels now wrap as tidy chips.
-- **Smoother busy indicator.** The footer's progress bar is replaced by a compact
-  animated spinner that names the running sync.
+A maintenance release that fixes in-app auto-update for builds installed with
+**`TaskManager-Setup.exe`**. Your data is untouched — every task, schedule, and
+integration link carries straight over.
 
 ## 🐛 Fixes
 
-- **Manual reordering no longer makes a task briefly vanish.** Drag-to-reorder now
-  runs its own drag so the table is never left with a missing row until the next
-  refresh.
-- **Linear remembers your team names.** Selected teams now display as
-  "Engineering (ENG)" after a restart instead of a bare id.
+- **Auto-update now works when the app was installed via the installer.** Installed
+  builds now update by re-running the installer silently instead of trying to swap
+  the exe in place. This keeps the Add/Remove Programs version and uninstaller in
+  sync, and — for the first time — updates installs under **`C:\Program Files`**
+  (with a single administrator prompt when needed). Per-user installs still update
+  with no prompt, and the portable **`TaskManager.exe`** keeps its in-place update.
+- **Declining the administrator prompt no longer loses your app.** If an elevated
+  update is cancelled, Task Manager reports it and stays open on the current
+  version instead of closing.
+
+> **Upgrading from an older Program Files install:** because the fix ships *inside*
+> this release, a build already installed under `C:\Program Files` needs to be
+> updated **once manually** — download and run `TaskManager-Setup.exe` below. Every
+> update after that installs automatically. Per-user installs upgrade to this
+> version automatically.
 
 ## 📦 Install
 
