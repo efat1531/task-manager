@@ -35,6 +35,8 @@ class Task:
     priority: Priority = Priority.MEDIUM
     deadline: Optional[str] = None          # ISO 8601 date, e.g. "2026-09-30"
     completed: bool = False
+    # ISO datetime of when the task was marked complete; None while it is open.
+    completed_at: Optional[str] = None
     category: str = ""
     sort_order: int = 0
     id: Optional[int] = None
@@ -67,3 +69,11 @@ class Task:
             return False
         due = self._due_date()
         return due is not None and due == datetime.now().date()
+
+    def completed_on(self, day: str) -> bool:
+        """True if this task is complete and was marked so on ``day`` (YYYY-MM-DD)."""
+        return (
+            self.completed
+            and bool(self.completed_at)
+            and self.completed_at[:10] == day
+        )
