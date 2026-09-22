@@ -1,14 +1,21 @@
-# Task Manager v2.1.1
+# Task Manager v2.1.2
 
-A small build maintenance release. No feature or data changes — every task,
-schedule, and integration link carries straight over.
+A bug-fix release. No data changes — every task, schedule, and integration link
+carries straight over.
 
-## 🔧 Changes
+## 🐞 Fixes
 
-- **Portable `TaskManager.exe` is no longer UPX-packed.** Packed executables trip
-  extra antivirus, SmartScreen, and Smart App Control heuristics, which was blocking
-  v2.1.0 on some machines. The exe is a little larger now but trips fewer flags on
-  first run.
+- **Desktop notifications now actually appear on Windows.** They previously used the
+  legacy tray "balloon tip", which Windows 10/11 routinely suppress. Notifications now
+  use native Windows toasts that land reliably in the Action Center, and the
+  Notifications tab's **Send a test notification** button now reports honest
+  success/failure instead of always claiming it sent. (Other platforms keep the
+  previous notifier.)
+- **The "Completed" filter now shows only what you completed that day.** Selecting
+  **Status → Completed** used to list every completed task ever, including deadline-less
+  ones. It now shows only tasks marked complete on the selected day (defaults to today),
+  and follows the day picker so you can look back at any date. Older tasks completed
+  before this update have no recorded completion date and appear under **All**.
 
 ## 📦 Install
 

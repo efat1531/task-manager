@@ -162,3 +162,75 @@ def test_is_overdue():
     assert Task("future", deadline=tomorrow).is_overdue is False
     assert Task("done", deadline=yesterday, completed=True).is_overdue is False
     assert Task("no-deadline").is_overdue is False
+
+
+# ---- completion timestamp (drives the "Completed today" filter) -------------
+
+def test_completed_on_helper():
+    stamp = "2026-09-22T10:30:00"
+    assert Task("x", completed=True, completed_at=stamp).completed_on("2026-09-22")
+    assert not Task("x", completed=True, completed_at=stamp).completed_on("2026-09-21")
+    # An open task, or one with no recorded completion date, never matches.
+    assert not Task("y", completed=False, completed_at=stamp).completed_on("2026-09-22")
+    assert not Task("z", completed=True).completed_on("2026-09-22")
+
+
+def test_toggle_completed_stamps_and_clears_completed_at(controller):
+    task = controller.create_task("Ship it")
+    assert task.completed_at is None
+
+    controller.toggle_completed(task, today="2026-09-22")
+    assert task.completed is True and task.completed_at == "2026-09-22"
+    reloaded = controller.list_tasks()[0]
+    assert reloaded.completed is True and reloaded.completed_at == "2026-09-22"
+    assert reloaded.completed_on("2026-09-22") is True
+
+    # Reopening clears the stamp, on the object and in the DB.
+    controller.toggle_completed(task)
+    assert task.completed is False and task.completed_at is None
+    assert controller.list_tasks()[0].completed_at is None
+
+
+def test_toggle_completed_defaults_to_today(controller):
+    from datetime import date
+    task = controller.create_task("Now")
+    controller.toggle_completed(task)  # no explicit day
+    assert controller.list_tasks()[0].completed_at == date.today().isoformat()
+
+
+def test_migration_adds_completed_at_column(tmp_path):
+    """Opening a pre-existing DB without the column backfills it as NULL."""
+    import sqlite3
+
+    db = tmp_path / "legacy.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        """CREATE TABLE tasks (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               title TEXT NOT NULL,
+               description TEXT NOT NULL DEFAULT '',
+               priority INTEGER NOT NULL DEFAULT 2,
+               sort_order INTEGER NOT NULL DEFAULT 0,
+               deadline TEXT,
+               completed INTEGER NOT NULL DEFAULT 0,
+               category TEXT NOT NULL DEFAULT '',
+               created_at TEXT NOT NULL
+           )"""
+    )
+    con.execute(
+        "INSERT INTO tasks (title, completed, created_at) VALUES (?, 1, ?)",
+        ("old done", "2020-01-01T00:00:00"),
+    )
+    con.commit()
+    con.close()
+
+    repo = TaskRepository(str(db))
+    try:
+        cols = {r["name"] for r in repo._conn.execute("PRAGMA table_info(tasks)")}
+        assert "completed_at" in cols
+        tasks = repo.list()
+        assert len(tasks) == 1
+        assert tasks[0].completed is True
+        assert tasks[0].completed_at is None  # historical completion has no date
+    finally:
+        repo.close()

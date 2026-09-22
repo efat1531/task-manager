@@ -200,9 +200,13 @@ class TaskController:
         self._repo.update(task)
         return task
 
-    def toggle_completed(self, task: Task) -> Task:
+    def toggle_completed(self, task: Task, today: Optional[str] = None) -> Task:
         task.completed = not task.completed
-        self._repo.set_completed(task.id, task.completed)
+        stamp = (
+            (today or date.today().isoformat()) if task.completed else None
+        )
+        task.completed_at = stamp
+        self._repo.set_completed(task.id, task.completed, stamp)
         return task
 
     def delete_task(self, task_id: int) -> None:

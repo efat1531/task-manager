@@ -404,8 +404,15 @@ class MainWindow(QMainWindow):
         status = self._status_filter.currentData()
         if status == "open" and task.completed:
             return False
-        if status == "completed" and not task.completed:
-            return False
+        if status == "completed":
+            # One-off tasks must have been marked complete on the selected day;
+            # a recurring Occurrence is already generated only for that day, so it
+            # just needs to be completed.
+            if isinstance(task, Task):
+                if not task.completed_on(self._selected_date()):
+                    return False
+            elif not task.completed:
+                return False
         category = self._category_filter.currentText()
         if category != _ALL_CATEGORIES and (task.category or "") != category:
             return False

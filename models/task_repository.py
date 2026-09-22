@@ -6,6 +6,7 @@ Uses parameterized queries throughout to avoid SQL injection.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     sort_order          INTEGER NOT NULL DEFAULT 0,
     deadline            TEXT,
     completed           INTEGER NOT NULL DEFAULT 0,
+    completed_at        TEXT,
     category            TEXT    NOT NULL DEFAULT '',
     created_at          TEXT    NOT NULL,
     unresolved_comments INTEGER NOT NULL DEFAULT 0
@@ -75,7 +77,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_notifications_dedup
 # Column order used by _row_to_task / SELECT statements.
 _COLUMNS = (
     "id, title, description, priority, sort_order, deadline, completed, "
-    "category, created_at, unresolved_comments"
+    "completed_at, category, created_at, unresolved_comments"
 )
 
 # Column order for schedule SELECTs / _row_to_schedule.
@@ -119,6 +121,8 @@ class TaskRepository:
                 "ALTER TABLE tasks ADD COLUMN "
                 "unresolved_comments INTEGER NOT NULL DEFAULT 0"
             )
+        if "completed_at" not in cols:
+            self._conn.execute("ALTER TABLE tasks ADD COLUMN completed_at TEXT")
 
     # ---- helpers ---------------------------------------------------------
     @staticmethod
@@ -131,6 +135,7 @@ class TaskRepository:
             sort_order=row["sort_order"],
             deadline=row["deadline"],
             completed=bool(row["completed"]),
+            completed_at=row["completed_at"],
             category=row["category"],
             created_at=row["created_at"],
             unresolved_comments=row["unresolved_comments"],
@@ -141,11 +146,11 @@ class TaskRepository:
         cur = self._conn.execute(
             """INSERT INTO tasks
                    (title, description, priority, sort_order, deadline, completed,
-                    category, created_at, unresolved_comments)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    completed_at, category, created_at, unresolved_comments)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (task.title, task.description, int(task.priority), task.sort_order,
-             task.deadline, int(task.completed), task.category, task.created_at,
-             int(task.unresolved_comments)),
+             task.deadline, int(task.completed), task.completed_at, task.category,
+             task.created_at, int(task.unresolved_comments)),
         )
         self._conn.commit()
         task.id = cur.lastrowid
@@ -182,11 +187,11 @@ class TaskRepository:
         self._conn.execute(
             """UPDATE tasks SET
                    title = ?, description = ?, priority = ?, sort_order = ?,
-                   deadline = ?, completed = ?, category = ?,
+                   deadline = ?, completed = ?, completed_at = ?, category = ?,
                    unresolved_comments = ?
                WHERE id = ?""",
             (task.title, task.description, int(task.priority), task.sort_order,
-             task.deadline, int(task.completed), task.category,
+             task.deadline, int(task.completed), task.completed_at, task.category,
              int(task.unresolved_comments), task.id),
         )
         self._conn.commit()
@@ -199,10 +204,23 @@ class TaskRepository:
         )
         self._conn.commit()
 
-    def set_completed(self, task_id: int, completed: bool) -> None:
+    def set_completed(
+        self, task_id: int, completed: bool, completed_at: Optional[str] = None
+    ) -> None:
+        """Toggle completion and stamp/clear ``completed_at``.
+
+        Completing stamps the moment (the passed value, or now); reopening clears
+        it. Every completion path — the row checkbox and the Azure/Linear sync
+        auto-complete/reopen — routes through here, so the timestamp stays correct.
+        """
+        stamp = (
+            (completed_at or datetime.now().isoformat(timespec="seconds"))
+            if completed
+            else None
+        )
         self._conn.execute(
-            "UPDATE tasks SET completed = ? WHERE id = ?",
-            (int(completed), task_id),
+            "UPDATE tasks SET completed = ?, completed_at = ? WHERE id = ?",
+            (int(completed), stamp, task_id),
         )
         self._conn.commit()
 
@@ -220,10 +238,11 @@ class TaskRepository:
             raise ValueError("Cannot restore a task without an id.")
         self._conn.execute(
             f"""INSERT INTO tasks ({_COLUMNS})
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (task.id, task.title, task.description, int(task.priority),
              task.sort_order, task.deadline, int(task.completed),
-             task.category, task.created_at, int(task.unresolved_comments)),
+             task.completed_at, task.category, task.created_at,
+             int(task.unresolved_comments)),
         )
         self._conn.commit()
 
