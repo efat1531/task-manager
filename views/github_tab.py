@@ -414,11 +414,15 @@ class GitHubIntegrationTab(QWidget):
         self._worker = _GitHubWorker(cfg, token, mode, sources)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
-        self._worker.tested.connect(self._status.setText)
+        self._worker.tested.connect(self._on_tested)
         self._worker.synced.connect(self.prs_fetched)
         self._worker.failed.connect(self._on_failed)
         self._worker.finished.connect(self._cleanup_worker)
         self._thread.start()
+
+    def _on_tested(self, ok: bool, message: str) -> None:
+        # ``tested`` carries (ok, message); the label only takes the text.
+        self._status.setText(message)
 
     def _on_failed(self, message: str) -> None:
         self._status.setText(f"Error: {message}")

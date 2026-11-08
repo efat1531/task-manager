@@ -40,7 +40,7 @@ working in that directory.
 python -m venv .venv; .venv\Scripts\Activate.ps1   # first time
 pip install -r requirements.txt
 python main.py                    # run from source (DB at data\tasks.db)
-pytest                            # 217 tests, headless, ~0.3s
+pytest                            # 219 tests, headless, ~0.3s
 pyinstaller task_manager.spec     # build dist\TaskManager.exe
 ```
 
