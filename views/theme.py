@@ -343,8 +343,11 @@ QStatusBar { background: $surface; border-top: 1px solid $divider; color: $neutr
 QStatusBar::item { border: 0; }
 QLabel { background: transparent; }
 
-/* Footer busy indicator ("⟳ Syncing…") — accent color while a worker runs. */
-QLabel#busyIndicator { color: $accent; }
+/* Footer sync ring's hover card (views/sync_indicator.py). */
+QFrame#syncPopup { background: $surface; border: 1px solid $accent; }
+QLabel#syncPopupTitle { color: $neutral_600; font-size: 11px; }
+QLabel#syncPopupTime { color: $neutral_700; }
+QLabel#syncPopupBusy { color: $accent; }
 
 /* Accent status strip on the integration tabs. */
 QLabel#statusStrip {
