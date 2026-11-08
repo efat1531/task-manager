@@ -410,3 +410,119 @@ def test_test_connection_messages(monkeypatch):
         lambda r, timeout: _Resp(json.dumps({"data": {"viewer": {"login": "alice"}}})),
     )
     assert GitHubClient("tok").test_connection() == (True, "Connected as alice.")
+
+
+# ---- review-fix regressions -------------------------------------------------
+def test_stale_done_marker_does_not_reopen_hand_completed_task(controller):
+    controller.sync_github_prs([_pr(1)], "review")
+    controller.sync_github_prs([], "review")  # auto-completed, marker written
+    task_id = controller.list_tasks()[0].id
+    controller._repo.set_completed(task_id, False)  # user reopens by hand
+    controller.sync_github_prs([_pr(1)], "review")  # PR back: stale marker dropped
+    controller._repo.set_completed(task_id, True)  # user completes by hand
+    s = controller.sync_github_prs([_pr(1)], "review")
+    assert s["reopened"] == 0 and controller.list_tasks()[0].completed
+
+
+def test_changes_requested_notifies_even_when_author_priority_is_low(controller):
+    cfg = GitHubConfig(priority_author=Priority.LOW)
+    controller.sync_github_prs([_pr(1, author=True)], "author", cfg)
+    controller.drain_notification_events()
+    controller.sync_github_prs([_pr(1, author=True, changes=True)], "author", cfg)
+    assert [e.source for e in controller.drain_notification_events()] == [
+        "github_pr_changes"
+    ]
+
+
+def test_empty_fetch_that_would_mass_complete_is_held(controller):
+    n = controller.EMPTY_SYNC_GUARD
+    controller.sync_github_prs([_pr(i) for i in range(1, n + 1)], "review")
+    s = controller.sync_github_prs([], "review")
+    assert s["completed"] == 0 and s["held"] == n
+    assert not any(t.completed for t in controller.list_tasks())
+
+
+def test_empty_fetch_below_guard_still_completes(controller):
+    controller.sync_github_prs([_pr(1), _pr(2)], "review")
+    s = controller.sync_github_prs([], "review")
+    assert s["completed"] == 2 and s["held"] == 0
+
+
+def test_non_empty_fetch_is_never_held(controller):
+    n = controller.EMPTY_SYNC_GUARD
+    controller.sync_github_prs([_pr(i) for i in range(1, n + 2)], "review")
+    s = controller.sync_github_prs([_pr(1)], "review")
+    assert s["completed"] == n and s["held"] == 0
+
+
+@pytest.mark.parametrize("token", ["", "ab cd", "ab\ncd", "ab\x00cd", "tök"])
+def test_invalid_token_rejected_without_echo(monkeypatch, token):
+    def boom(request, timeout):  # must never be reached
+        raise AssertionError("request sent with invalid token")
+
+    monkeypatch.setattr(github_client.urllib.request, "urlopen", boom)
+    with pytest.raises(GitHubError) as exc:
+        GitHubClient(token).get_viewer_login()
+    assert token not in str(exc.value) or token == ""
+
+
+def test_unexpected_error_does_not_echo_exception_text(monkeypatch):
+    def boom(request, timeout):
+        raise ValueError("Invalid header value b'Bearer SECRET'")
+
+    monkeypatch.setattr(github_client.urllib.request, "urlopen", boom)
+    with pytest.raises(GitHubError) as exc:
+        GitHubClient("tok").get_viewer_login()
+    assert "SECRET" not in str(exc.value) and "ValueError" in str(exc.value)
+
+
+def test_secondary_limit_with_only_reset_header_is_retried(monkeypatch):
+    reset = str(int(github_client.time.time()) + 3)
+    seq = [_http_error(403, {"X-RateLimit-Reset": reset}),
+           _Resp(json.dumps({"data": {"viewer": {"login": "alice"}}}))]
+    sleeps = []
+
+    def fake(request, timeout):
+        item = seq.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    monkeypatch.setattr(github_client.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(github_client.time, "sleep", sleeps.append)
+    assert GitHubClient("tok").get_viewer_login() == "alice"
+    assert len(sleeps) == 1 and 1 <= sleeps[0] <= 3
+
+
+def test_5xx_is_retried_then_succeeds_or_fails(monkeypatch):
+    seq = [_http_error(502), _Resp(json.dumps({"data": {"viewer": {"login": "a"}}}))]
+    monkeypatch.setattr(github_client.time, "sleep", lambda s: None)
+
+    def fake(request, timeout):
+        item = seq.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    monkeypatch.setattr(github_client.urllib.request, "urlopen", fake)
+    assert GitHubClient("tok").get_viewer_login() == "a"
+
+    calls = []
+
+    def always(request, timeout):
+        calls.append(1)
+        raise _http_error(503)
+
+    monkeypatch.setattr(github_client.urllib.request, "urlopen", always)
+    with pytest.raises(GitHubError, match="HTTP 503"):
+        GitHubClient("tok").get_viewer_login()
+    assert len(calls) == github_client._MAX_ATTEMPTS
+
+
+def test_client_rejects_invalid_owner(monkeypatch):
+    monkeypatch.setattr(
+        github_client.urllib.request, "urlopen",
+        lambda r, timeout: pytest.fail("search sent with invalid owner"),
+    )
+    with pytest.raises(GitHubError, match="organization"):
+        GitHubClient("tok").list_created_prs("alice", owner="contoso repo:secret")

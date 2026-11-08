@@ -62,6 +62,9 @@ schedules, and auto-generate tasks from your Azure DevOps and GitHub pull reques
   at **Low** while changes are requested.
 - Review requests addressed only to a *team* you belong to are not synced (only
   requests to you personally).
+- Safety net: if GitHub returns no pull requests at all while 5 or more tasks would be
+  auto-completed (e.g. the token lost org access), those tasks are left open and the
+  tab says so.
 
 ### Linear integration
 - A **Linear** tab connects to Linear using a **personal API key**, stored securely

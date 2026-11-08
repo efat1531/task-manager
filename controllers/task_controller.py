@@ -492,6 +492,9 @@ class TaskController:
         self._repo.clear_pr_links(prefix=("review:", "author:"))
 
     # ---- GitHub pull-request sync ---------------------------------------
+    # Open tasks an *empty* GitHub fetch may auto-complete before it is held back.
+    EMPTY_SYNC_GUARD = 5
+
     def sync_github_prs(
         self,
         prs: List[GitHubPullRequest],
@@ -512,13 +515,17 @@ class TaskController:
         - A task this method auto-completed is reopened if its PR comes back (e.g.
           your review was re-requested). A task the user completed by hand is never
           reopened.
-        - For the "author" source the task follows the PR: open review threads pin
-          it as Urgent, and a PR with changes requested is parked at Low priority
-          with its pin suppressed until the author acts.
+        - For the "author" source the task follows the PR: its priority is
+          ``cfg.priority_author`` and open review threads pin it to the top
+          (``unresolved_comments``); a PR with changes requested is parked at Low
+          priority with its pin suppressed until the author acts.
+        - An *empty* fetch that would auto-complete ``EMPTY_SYNC_GUARD`` or more
+          tasks completes none of them (reported as ``held``).
 
         Reconciliation is scoped to ``source``'s key prefix, so syncing one source
         never touches the other's tasks, nor Azure's or Linear's. The returned
-        summary counts ``created`` / ``skipped`` / ``completed`` / ``reopened``.
+        summary counts ``created`` / ``skipped`` / ``completed`` / ``reopened`` /
+        ``held``.
         """
         cfg = config or GitHubConfig()
         prefix = source_prefix(source)
@@ -551,12 +558,16 @@ class TaskController:
             if task is None:  # the user deleted it; the link keeps it from returning
                 continue
             marker = done_key(source, pr.repository, pr.number)
-            if task.completed and marker in all_links:
-                # Auto-completed earlier (PR left the set) and now back: reopen.
-                self._repo.set_completed(task_id, False)
+            if marker in all_links:
+                # The PR is in the set, so the marker has done its job either way:
+                # reopen if the task is still auto-completed; if the user already
+                # reopened it by hand, just drop the stale marker so a later manual
+                # completion isn't mistaken for an auto-completion.
+                if task.completed:
+                    self._repo.set_completed(task_id, False)
+                    reopened += 1
+                    task = self._repo.get(task_id)
                 self._repo.delete_pr_link(marker)
-                reopened += 1
-                task = self._repo.get(task_id)
             if pr.is_author:
                 if pr.changes_requested:
                     new_priority = Priority.LOW
@@ -577,7 +588,7 @@ class TaskController:
                             f"{pr.unresolved_comment_count}"
                         ),
                     )
-                if pr.changes_requested and task.priority != Priority.LOW:
+                if pr.changes_requested:  # dedup_key makes this fire once per PR
                     self.record_notification(
                         kind=KIND_PR, source=SOURCE_GITHUB_CHANGES,
                         title="Changes requested on your PR", body=pr.title,
@@ -595,21 +606,31 @@ class TaskController:
 
         # Auto-complete tasks for PRs of this source that are no longer in scope,
         # leaving a marker so they can be reopened if the PR returns.
+        stale = []
         for key, task_id in existing.items():
             if key in current_keys:
                 continue
             task = self._repo.get(task_id)
             if task is not None and not task.completed:
-                self._repo.set_completed(task_id, True)
-                repo_part, _, number = key[len(prefix):].rpartition("#")
-                self._repo.link_pr(done_key(source, repo_part, int(number)), task_id)
-                completed += 1
+                stale.append((key, task_id))
+        # An empty result that would complete many tasks at once is far more likely
+        # a search that matched nothing (lost org access, wrong filter) than every
+        # PR closing together, so hold those tasks open rather than mass-complete.
+        held = 0
+        if not prs and len(stale) >= self.EMPTY_SYNC_GUARD:
+            held, stale = len(stale), []
+        for key, task_id in stale:
+            self._repo.set_completed(task_id, True)
+            repo_part, _, number = key[len(prefix):].rpartition("#")
+            self._repo.link_pr(done_key(source, repo_part, int(number)), task_id)
+            completed += 1
 
         return {
             "created": created,
             "skipped": skipped,
             "completed": completed,
             "reopened": reopened,
+            "held": held,
         }
 
     def clear_github_links(self) -> None:

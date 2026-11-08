@@ -13,7 +13,7 @@ from models.task import Priority
 
 #: Prefix shared by every GitHub dedup key in the ``pr_links`` table. The
 #: source ("review" | "author") follows, e.g. ``github-review:``. No ``_`` or
-#: ``%`` here: the repository clears links with SQL ``LIKE``.
+#: ``%`` here: the repository clears links with SQL ``substr``.
 KEY_PREFIX = "github-"
 
 # GitHub account/org logins: alphanumerics and single hyphens (also tolerates the

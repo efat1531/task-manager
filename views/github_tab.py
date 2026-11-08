@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 from models.github import GitHubConfig
 from models.task import Priority
 from services import credentials, github_settings
-from services.github_client import GitHubClient, GitHubError
+from services.github_client import GitHubClient, GitHubError, token_is_valid
 from views.blueprint import BlueprintFrame
 
 _TOKEN_PLACEHOLDER = "Personal access token (repo / Pull requests: read)"
@@ -298,6 +298,12 @@ class GitHubIntegrationTab(QWidget):
             return
         github_settings.save_config(cfg)
         typed = self._token.text().strip()
+        if typed and not token_is_valid(typed):
+            self._status.setText(
+                "Settings saved, but the token contains spaces or control characters — "
+                "paste it again."
+            )
+            return
         if typed:
             if credentials.save_github_token(typed):
                 self._token.clear()
@@ -415,7 +421,13 @@ class GitHubIntegrationTab(QWidget):
         if summary.get("reopened"):
             parts.append(f"{summary['reopened']} reopened")
         parts.append(f"{summary['skipped']} unchanged")
-        self._status.setText(f"Synced {stamp} · " + ", ".join(parts) + ".")
+        text = f"Synced {stamp} · " + ", ".join(parts) + "."
+        if summary.get("held"):
+            text += (
+                f" GitHub returned no pull requests, so {summary['held']} open tasks "
+                "were left as they are — check the token's access and the Organization filter."
+            )
+        self._status.setText(text)
         self.sync_completed.emit(summary)
 
     def _cleanup_worker(self) -> None:

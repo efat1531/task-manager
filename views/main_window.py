@@ -926,7 +926,7 @@ class MainWindow(QMainWindow):
     def _on_github_prs_fetched(self, results: dict) -> None:
         """A background sync returned PRs per source; reconcile and refresh."""
         cfg = self._github_tab.current_config()
-        totals = {"created": 0, "skipped": 0, "completed": 0, "reopened": 0}
+        totals = {"created": 0, "skipped": 0, "completed": 0, "reopened": 0, "held": 0}
         for source, prs in results.items():
             summary = self._controller.sync_github_prs(prs, source=source, config=cfg)
             for key in totals:
