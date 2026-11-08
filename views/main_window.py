@@ -881,7 +881,9 @@ class MainWindow(QMainWindow):
                     share = max(0, remaining) / timer.interval()
                     fraction = share if fraction is None else min(fraction, share)
         self._sync_indicator.set_state(rows, bool(self._busy_ops), fraction)
-        self._sync_indicator.setVisible(bool(rows))
+        self._sync_indicator.setVisible(
+            bool(rows) or self._sync_indicator.is_spinning()
+        )
 
     # ---- GitHub integration ---------------------------------------------
     def _on_github_prs_fetched(self, results: dict) -> None:
