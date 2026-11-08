@@ -8,7 +8,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from models.notification import Notification
 from models.schedule import Frequency, Schedule
@@ -390,17 +390,22 @@ class TaskRepository:
         self._conn.execute("DELETE FROM pr_links WHERE pr_key = ?", (pr_key,))
         self._conn.commit()
 
-    def clear_pr_links(self, prefix: Optional[str] = None) -> None:
+    def clear_pr_links(self, prefix: "Optional[str | Sequence[str]]" = None) -> None:
         """Forget stored external->task links (used when removing an integration).
 
         With no ``prefix`` every link is removed (the original behaviour). With a
-        ``prefix`` (e.g. ``"linear:"``) only keys starting with it are removed, so
-        removing one integration leaves the other's links intact.
+        ``prefix`` (e.g. ``"linear:"``) -- or several -- only keys starting with one
+        of them are removed, so removing one integration leaves the others' intact.
         """
-        if prefix:
-            self._conn.execute(
-                "DELETE FROM pr_links WHERE pr_key LIKE ? || '%'", (prefix,)
-            )
+        if isinstance(prefix, str):
+            prefix = [prefix]
+        prefixes = [p for p in (prefix or []) if p]
+        if prefixes:
+            for p in prefixes:
+                self._conn.execute(
+                    "DELETE FROM pr_links WHERE substr(pr_key, 1, ?) = ?",
+                    (len(p), p),
+                )
         else:
             self._conn.execute("DELETE FROM pr_links")
         self._conn.commit()

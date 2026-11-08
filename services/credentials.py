@@ -4,8 +4,9 @@ Every call is wrapped so a missing/unavailable keyring backend degrades
 gracefully (returns None / no-ops) instead of crashing the app. Secrets are
 never written to QSettings or the database.
 
-Two secrets are stored, each under its own keyring *account*:
+Three secrets are stored, each under its own keyring *account*:
 - ``azure_pat`` — the Azure DevOps Personal Access Token.
+- ``github_token`` — the GitHub personal access token.
 - ``linear_api_key`` — the Linear personal API key.
 """
 from __future__ import annotations
@@ -15,6 +16,7 @@ from typing import Optional
 _SERVICE = "TaskManager"
 _ACCOUNT = "azure_pat"
 _LINEAR_ACCOUNT = "linear_api_key"
+_GITHUB_ACCOUNT = "github_token"
 
 
 def _keyring():
@@ -98,3 +100,16 @@ def load_linear_key() -> Optional[str]:
 
 def delete_linear_key() -> None:
     _del_secret(_LINEAR_ACCOUNT)
+
+
+# ---- GitHub token --------------------------------------------------------
+def save_github_token(token: str) -> bool:
+    return _set_secret(_GITHUB_ACCOUNT, token)
+
+
+def load_github_token() -> Optional[str]:
+    return _get_secret(_GITHUB_ACCOUNT)
+
+
+def delete_github_token() -> None:
+    _del_secret(_GITHUB_ACCOUNT)

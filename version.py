@@ -8,12 +8,12 @@ commit ``v<APP_VERSION>`` (the release workflow asserts the two match).
 """
 from __future__ import annotations
 
-APP_VERSION = "2.1.2"
+APP_VERSION = "2.2.0"
 
 #: Human-facing metadata surfaced in the Help → About box. Kept here so the UI
 #: imports them from the same single source as the version.
 APP_AUTHOR = "Efat Sikder"
-APP_DESCRIPTION = "A personal task manager with Linear & Azure DevOps integration."
+APP_DESCRIPTION = "A personal task manager with GitHub, Linear & Azure DevOps integration."
 APP_COPYRIGHT = "© 2026 Efat Sikder"
 APP_CONTACT_EMAIL = "efat1531@gmail.com"
 

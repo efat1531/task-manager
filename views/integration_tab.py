@@ -140,8 +140,16 @@ class IntegrationTab(QWidget):
         )
         subtitle.setObjectName("pageSubtitle")
         subtitle.setWordWrap(True)
+        token_help = QLabel(
+            "Minimal token: Azure DevOps → User settings → Personal access tokens → "
+            "New Token. Organization: the one you sync. Scopes → Custom defined → "
+            "Code → Read; nothing else. Set a short expiry and renew it when it lapses."
+        )
+        token_help.setObjectName("pageSubtitle")
+        token_help.setWordWrap(True)
         root.addWidget(heading)
         root.addWidget(subtitle)
+        root.addWidget(token_help)
 
         # ---- two blueprint panels, side by side, top-aligned -------------
         columns = QGridLayout()

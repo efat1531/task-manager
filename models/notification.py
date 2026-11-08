@@ -21,6 +21,9 @@ from typing import Optional
 SOURCE_AZURE_REVIEW = "azure_pr_review"
 SOURCE_AZURE_VOTE = "azure_pr_vote"
 SOURCE_AZURE_COMMENT = "azure_pr_comment"
+SOURCE_GITHUB_REVIEW = "github_pr_review"
+SOURCE_GITHUB_CHANGES = "github_pr_changes"
+SOURCE_GITHUB_COMMENT = "github_pr_comment"
 SOURCE_LINEAR = "linear_issue"
 SOURCE_TASK_DUE = "task_due_today"
 SOURCE_TASK_OVERDUE = "task_overdue"
@@ -76,6 +79,9 @@ class NotificationConfig:
     azure_pr_review: bool = True
     azure_pr_vote: bool = True
     azure_pr_comment: bool = True
+    github_pr_review: bool = True
+    github_pr_changes: bool = True
+    github_pr_comment: bool = True
     linear_issue: bool = True
     task_due_today: bool = True
     task_overdue: bool = True

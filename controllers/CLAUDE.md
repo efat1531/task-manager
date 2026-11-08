@@ -2,7 +2,7 @@
 
 | File | Purpose |
 |------|---------|
-| `task_controller.py` | `TaskController` — the single controller. Task/schedule CRUD via the repository, undo stack, day/export logic, and Azure/Linear **sync reconciliation**. |
+| `task_controller.py` | `TaskController` — the single controller. Task/schedule CRUD via the repository, undo stack, day/export logic, and Azure/GitHub/Linear **sync reconciliation** (`sync_pull_requests`, `sync_github_prs`, `sync_linear_issues`). |
 
 ## Invariants
 - **No Qt imports, no network I/O** — stays headlessly unit-testable.

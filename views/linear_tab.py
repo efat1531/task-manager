@@ -130,8 +130,16 @@ class LinearIntegrationTab(QWidget):
         )
         subtitle.setObjectName("pageSubtitle")
         subtitle.setWordWrap(True)
+        token_help = QLabel(
+            "Minimal key: Linear → Settings → Account → Security & access → Personal API "
+            "keys → New API key. Permissions: Read only (the app never writes to Linear). "
+            "Team access: only the teams you sync."
+        )
+        token_help.setObjectName("pageSubtitle")
+        token_help.setWordWrap(True)
         root.addWidget(heading)
         root.addWidget(subtitle)
+        root.addWidget(token_help)
 
         # ---- two columns of blueprint panels, top-aligned ----------------
         columns = QGridLayout()
