@@ -1,6 +1,6 @@
 # tests/ — pytest suite
 
-Run from the project root: `pytest` (currently **225 tests**, ~0.9s). Each test
+Run from the project root: `pytest` (currently **227 tests**, ~0.9s). Each test
 module prepends the repo root to `sys.path`, so no install/packaging is needed.
 
 | File | Covers |

@@ -7,6 +7,7 @@ card. Pure presentation: ``MainWindow`` feeds it rows via :meth:`set_state`.
 """
 from __future__ import annotations
 
+import time
 from typing import Dict, Optional, Sequence, Tuple
 
 from PySide6.QtCore import (
@@ -24,6 +25,7 @@ GRACE_MS = 250   # mouse-left → fade starts; GRACE + HIDE stays under 500 ms
 SLIDE_PX = 8
 _SIZE = 22       # ring widget edge, px
 _SPIN_MS = 900   # one full revolution while syncing
+MIN_SPIN_MS = 1800  # a sync spins for at least two turns so it is noticeable
 
 
 class _SyncPopup(QFrame):
@@ -86,7 +88,12 @@ class SyncIndicator(QWidget):
         super().__init__(parent)
         self.setFixedSize(_SIZE, _SIZE)
         self.setAccessibleName("Sync status")
-        self._busy = False
+        self._busy = False        # ring is spinning (may outlast the sync itself)
+        self._want_busy = False   # a sync is actually running right now
+        self._spin_since = 0.0
+        self._stop_timer = QTimer(self)
+        self._stop_timer.setSingleShot(True)
+        self._stop_timer.timeout.connect(self._stop_spin)
         self._fraction: Optional[float] = None  # remaining share of the next interval
         self._angle = 0.0
         self._rows: Sequence[Row] = ()
@@ -125,13 +132,33 @@ class SyncIndicator(QWidget):
         if self._popup.isVisible():
             self._base = self._target_pos()
             self._place()
-        if busy != self._busy:
-            self._busy = busy
-            if busy:
+        self._want_busy = busy
+        if busy:
+            self._stop_timer.stop()
+            if not self._busy:
+                self._busy = True
+                self._spin_since = time.monotonic()
                 self._spin.start()
+        elif self._busy and not self._stop_timer.isActive():
+            # A sync often finishes in well under a second; keep spinning long
+            # enough to be seen rather than flashing for a frame or two.
+            shown_ms = (time.monotonic() - self._spin_since) * 1000
+            if shown_ms >= MIN_SPIN_MS:
+                self._stop_spin()
             else:
-                self._spin.stop()
-                self._angle = 0.0
+                self._stop_timer.start(int(MIN_SPIN_MS - shown_ms))
+        self.update()
+
+    def is_spinning(self) -> bool:
+        """True while the ring is spinning, including the minimum-visibility tail."""
+        return self._busy
+
+    def _stop_spin(self) -> None:
+        if self._want_busy:
+            return
+        self._busy = False
+        self._spin.stop()
+        self._angle = 0.0
         self.update()
 
     # ---- painting --------------------------------------------------------

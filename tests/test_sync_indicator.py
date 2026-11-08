@@ -70,5 +70,21 @@ def test_no_rows_means_no_card(qtbot):
 
 def test_spin_runs_only_while_busy(qtbot, ring):
     assert ring._spin.state() == ring._spin.State.Running
+    ring._spin_since -= 10  # pretend the minimum visible spin has elapsed
     ring.set_state(ROWS, busy=False, fraction=0.5)
     assert ring._spin.state() == ring._spin.State.Stopped
+    assert not ring.is_spinning()
+
+
+def test_short_sync_still_spins_for_the_minimum_time(qtbot, ring):
+    ring.set_state(ROWS, busy=False, fraction=0.5)  # sync ended immediately
+    assert ring.is_spinning() and ring._spin.state() == ring._spin.State.Running
+    qtbot.waitUntil(lambda: not ring.is_spinning(), timeout=4000)
+    assert ring._spin.state() == ring._spin.State.Stopped
+
+
+def test_new_sync_during_the_tail_keeps_spinning(qtbot, ring):
+    ring.set_state(ROWS, busy=False, fraction=0.5)
+    ring.set_state(ROWS, busy=True, fraction=0.5)  # next sync starts before the tail ends
+    qtbot.wait(sync_indicator.MIN_SPIN_MS + 300)
+    assert ring.is_spinning()
