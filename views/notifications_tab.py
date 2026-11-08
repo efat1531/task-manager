@@ -28,6 +28,9 @@ from models.notification import (
     SOURCE_AZURE_COMMENT,
     SOURCE_AZURE_REVIEW,
     SOURCE_AZURE_VOTE,
+    SOURCE_GITHUB_CHANGES,
+    SOURCE_GITHUB_COMMENT,
+    SOURCE_GITHUB_REVIEW,
     SOURCE_LINEAR,
     SOURCE_TASK_DUE,
     SOURCE_TASK_OVERDUE,
@@ -40,6 +43,11 @@ _AZURE = [
     (SOURCE_AZURE_REVIEW, "PR assigned for review", "When you're added as a reviewer"),
     (SOURCE_AZURE_VOTE, "Changes requested on your PR", "A reviewer asks for changes"),
     (SOURCE_AZURE_COMMENT, "New comment on your PR", "Unresolved comment threads"),
+]
+_GITHUB = [
+    (SOURCE_GITHUB_REVIEW, "PR review requested", "When your review is requested"),
+    (SOURCE_GITHUB_CHANGES, "Changes requested on your PR", "A reviewer asks for changes"),
+    (SOURCE_GITHUB_COMMENT, "New comment on your PR", "Unresolved review threads"),
 ]
 _LINEAR = [
     (SOURCE_LINEAR, "Issue assigned to you", "A synced status turns it into a task"),
@@ -106,9 +114,10 @@ class NotificationsTab(QWidget):
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(16)
         grid.addWidget(self._event_card("Azure DevOps", _AZURE), 0, 0)
-        grid.addWidget(self._event_card("Linear", _LINEAR), 0, 1)
-        grid.addWidget(self._event_card("Tasks && reminders", _TASKS), 1, 0)
-        grid.addWidget(self._delivery_card(), 1, 1)
+        grid.addWidget(self._event_card("GitHub", _GITHUB), 0, 1)
+        grid.addWidget(self._event_card("Linear", _LINEAR), 1, 0)
+        grid.addWidget(self._event_card("Tasks && reminders", _TASKS), 1, 1)
+        grid.addWidget(self._delivery_card(), 2, 0)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
         root.addLayout(grid)

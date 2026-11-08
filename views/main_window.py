@@ -40,6 +40,7 @@ from version import (
     GITHUB_REPO,
 )
 from views import icons, theme
+from views.github_tab import GitHubIntegrationTab
 from views.integration_tab import IntegrationTab
 from views.linear_tab import LinearIntegrationTab
 from views.notification_center import NotificationBell
@@ -94,6 +95,14 @@ class MainWindow(QMainWindow):
         )
         self._tabs.addTab(self._integration_tab, "Azure")
 
+        self._github_tab = GitHubIntegrationTab()
+        self._github_tab.prs_fetched.connect(self._on_github_prs_fetched)
+        self._github_tab.cleared.connect(self._on_github_cleared)
+        self._github_tab.busy_changed.connect(
+            lambda busy, label: self._on_integration_busy("github", busy, label)
+        )
+        self._tabs.addTab(self._github_tab, "GitHub")
+
         self._linear_tab = LinearIntegrationTab()
         self._linear_tab.issues_fetched.connect(self._on_linear_issues_fetched)
         self._linear_tab.cleared.connect(self._on_linear_cleared)
@@ -134,9 +143,12 @@ class MainWindow(QMainWindow):
         # (which reads both) is safe from the first _start_*_poll_timer() call on.
         self._poll_timer = QTimer(self)
         self._poll_timer.timeout.connect(self._auto_sync)
+        self._github_poll_timer = QTimer(self)
+        self._github_poll_timer.timeout.connect(self._auto_sync_github)
         self._linear_poll_timer = QTimer(self)
         self._linear_poll_timer.timeout.connect(self._auto_sync_linear)
         self._start_poll_timer()
+        self._start_github_poll_timer()
         self._start_linear_poll_timer()
 
         # Ticks once a second to refresh the countdown label from the poll timers.
@@ -893,6 +905,11 @@ class MainWindow(QMainWindow):
             parts.append(
                 self._format_countdown(self._poll_timer.remainingTime(), "Azure")
             )
+        if (self._github_tab.current_config().has_active_sources()
+                and self._github_poll_timer.isActive()):
+            parts.append(
+                self._format_countdown(self._github_poll_timer.remainingTime(), "GitHub")
+            )
         if (self._linear_tab.current_config().has_active_sources()
                 and self._linear_poll_timer.isActive()):
             parts.append(
@@ -904,6 +921,40 @@ class MainWindow(QMainWindow):
         else:
             self._sync_countdown.clear()
             self._sync_countdown.hide()
+
+    # ---- GitHub integration ---------------------------------------------
+    def _on_github_prs_fetched(self, results: dict) -> None:
+        """A background sync returned PRs per source; reconcile and refresh."""
+        cfg = self._github_tab.current_config()
+        totals = {"created": 0, "skipped": 0, "completed": 0, "reopened": 0}
+        for source, prs in results.items():
+            summary = self._controller.sync_github_prs(prs, source=source, config=cfg)
+            for key in totals:
+                totals[key] += summary[key]
+        self._github_tab.report_sync_result(totals)
+        self._start_github_poll_timer()  # pick up any interval/enabled change
+        self._update_sync_countdown()
+        self.refresh()
+        self._deliver_events(self._controller.drain_notification_events())
+
+    def _auto_sync_github(self) -> None:
+        self._github_tab.trigger_sync(auto=True)
+
+    def _on_github_cleared(self) -> None:
+        """The integration was removed: forget GitHub links and stop polling."""
+        self._controller.clear_github_links()
+        self._github_poll_timer.stop()
+        self._update_sync_countdown()
+        self.refresh()
+
+    def _start_github_poll_timer(self) -> None:
+        """(Re)start the GitHub auto-poll timer from the saved config, or stop it."""
+        cfg = self._github_tab.current_config()
+        if cfg.has_active_sources():
+            self._github_poll_timer.start(max(1, cfg.poll_minutes) * 60_000)
+        else:
+            self._github_poll_timer.stop()
+        self._update_sync_countdown()
 
     # ---- Linear integration ---------------------------------------------
     def _on_linear_issues_fetched(self, issues: list) -> None:

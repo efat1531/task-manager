@@ -1,6 +1,6 @@
 # tests/ — pytest suite
 
-Run from the project root: `pytest` (currently **172 tests**, ~0.9s). Each test
+Run from the project root: `pytest` (currently **199 tests**, ~0.9s). Each test
 module prepends the repo root to `sys.path`, so no install/packaging is needed.
 
 | File | Covers |
@@ -8,6 +8,7 @@ module prepends the repo root to `sys.path`, so no install/packaging is needed.
 | `test_task_logic.py` | Task CRUD, validation, completion, undo (in-memory DB). |
 | `test_schedule_logic.py` | `occurs_on` recurrence + schedule/override persistence. |
 | `test_integration_logic.py` | Azure PR dedup, auto-complete, parsing, source + priority. |
+| `test_github_logic.py` | GitHub dedup, lifecycle, per-integration link clearing, GraphQL parsing, client retry/pagination (no network). |
 | `test_linear_logic.py` | Linear dedup, auto-complete, status-priority, label exclusion, parsing. |
 | `test_export_logic.py` | Per-day JSON export scoping + serialization. |
 | `test_updater_logic.py` | Version compare / asset pick / release parsing (no network). |

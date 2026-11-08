@@ -5,7 +5,7 @@ end-user/setup docs — this file covers only what an agent needs to work here.
 
 **What it is:** a cross-platform desktop **Task Manager** — PySide6 (Qt 6) UI +
 SQLite (stdlib `sqlite3`), organized as **MVC**. It manages one-off tasks and
-recurring schedules, and auto-generates tasks from Azure DevOps PRs and Linear
+recurring schedules, and auto-generates tasks from Azure DevOps PRs, GitHub PRs and Linear
 issues.
 
 ## Golden rule — layering
@@ -40,7 +40,7 @@ working in that directory.
 python -m venv .venv; .venv\Scripts\Activate.ps1   # first time
 pip install -r requirements.txt
 python main.py                    # run from source (DB at data\tasks.db)
-pytest                            # 139 tests, headless, ~0.3s
+pytest                            # 199 tests, headless, ~0.3s
 pyinstaller task_manager.spec     # build dist\TaskManager.exe
 ```
 
@@ -51,9 +51,9 @@ pyinstaller task_manager.spec     # build dist\TaskManager.exe
 - **All SQL is confined to `models/task_repository.py`**, always parameterized.
   `order_by` values are validated against a whitelist — never interpolate raw SQL.
 - Dates are **ISO strings** (`YYYY-MM-DD` / ISO datetime), stored as TEXT.
-- **Secrets (Azure PAT, Linear key) live only in the OS keyring** via
+- **Secrets (Azure PAT, GitHub token, Linear key) live only in the OS keyring** via
   `services/credentials.py` — never in the DB or QSettings. Non-secret config goes
-  in QSettings (`services/integration_settings.py`, `linear_settings.py`, `theme.py`).
+  in QSettings (`services/integration_settings.py`, `github_settings.py`, `linear_settings.py`, `theme.py`).
 
 ## Data & dedup keys
 
@@ -61,8 +61,9 @@ pyinstaller task_manager.spec     # build dist\TaskManager.exe
   (see `_data_dir` in `main.py`). Gitignored.
 - Tables: `tasks`, `schedules`, `schedule_overrides`, `pr_links`.
 - Dedup keys share the `pr_links` table: Azure `review:<org>:<id>` /
-  `author:<org>:<id>` (`pr_key`, `models/integration.py`), Linear `linear:<id>`
-  (`linear_key`, `models/linear.py`). **`pr_links` rows survive task deletion** by
+  `author:<org>:<id>` (`pr_key`, `models/integration.py`), GitHub
+  `github-review:<owner/repo>#<n>` / `github-author:…` (`github_key`, `models/github.py`),
+  Linear `linear:<id>` (`linear_key`, `models/linear.py`). **`pr_links` rows survive task deletion** by
   design, so a PR/issue is never turned into a task twice.
 - Tasks with `unresolved_comments > 0` (authored-PR comment threads) are **pinned to
   the top** in `TaskRepository.list` regardless of sort.

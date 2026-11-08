@@ -1,7 +1,26 @@
-# Task Manager v2.1.2
+# Task Manager v2.2.0
 
-A bug-fix release. No data changes — every task, schedule, and integration link
-carries straight over.
+Adds a **GitHub** integration alongside Azure DevOps and Linear. No data changes —
+every task, schedule, and integration link carries straight over.
+
+## ✨ New
+
+- **GitHub tab.** Turn your GitHub pull requests into tasks, just like the Azure tab:
+  enable **PRs I'm asked to review** and/or **PRs I opened**, pick a priority for each,
+  optionally restrict to one organization, and sync on demand or on a background
+  auto-poll. The access token lives only in the OS keyring.
+- **Same lifecycle as Azure.** Exactly one task per PR (never re-created if you delete
+  it); a task auto-completes when its PR is merged, closed, or you're no longer asked to
+  review it, and reopens if your review is re-requested. Your own PRs are pinned as
+  Urgent while review threads are unresolved and parked at Low while changes are
+  requested.
+- **GitHub notifications.** New toggles in the Notifications tab for review requests,
+  changes requested, and new comments on your PRs.
+
+## 🐞 Fixes
+
+- Removing the **Azure** integration no longer forgets Linear's synced-issue links
+  (it used to clear every integration's links).
 
 ## 🐞 Fixes
 

@@ -2,7 +2,7 @@
 
 A cross-platform desktop task manager built with **PySide6 (Qt)** and **SQLite**,
 organized around a clean **MVC** architecture. Manage one-off tasks and recurring
-schedules, and auto-generate tasks from your Azure DevOps pull requests and Linear issues.
+schedules, and auto-generate tasks from your Azure DevOps and GitHub pull requests and Linear issues.
 
 [![Release](https://img.shields.io/github/v/release/efat1531/task-manager?sort=semver)](https://github.com/efat1531/task-manager/releases)
 [![Build](https://github.com/efat1531/task-manager/actions/workflows/release.yml/badge.svg)](https://github.com/efat1531/task-manager/actions/workflows/release.yml)
@@ -51,6 +51,18 @@ schedules, and auto-generate tasks from your Azure DevOps pull requests and Line
 - Runs on demand via each **Sync now** button and on a **configurable background
   auto-poll**, all off the UI thread so the app never freezes.
 
+### GitHub integration
+- A **GitHub** tab works like the Azure tab: a **personal access token** (stored in the
+  **OS keyring**), an optional **organization** filter, and a configurable auto-poll.
+- Enable **PRs I'm asked to review** and/or **PRs I opened**, each with its own priority.
+- **Exactly one task per PR**, keyed by `owner/repo#number`. A task auto-completes when
+  its PR is merged/closed or you are no longer asked to review it, and reopens if your
+  review is re-requested.
+- Your own PRs are **pinned as Urgent** while review threads are unresolved, and parked
+  at **Low** while changes are requested.
+- Review requests addressed only to a *team* you belong to are not synced (only
+  requests to you personally).
+
 ### Linear integration
 - A **Linear** tab connects to Linear using a **personal API key**, stored securely
   in the **OS keyring** (never in the app database or settings file).
@@ -88,7 +100,7 @@ schedules, and auto-generate tasks from your Azure DevOps pull requests and Line
 | Storage      | SQLite (stdlib `sqlite3`)                                      |
 | Notifications| `plyer`                                                       |
 | Secrets      | `keyring` (OS credential store, e.g. Windows Credential Manager) |
-| Azure / Linear API | stdlib `urllib` (REST + GraphQL) — no extra HTTP dependency |
+| Azure / GitHub / Linear API | stdlib `urllib` (REST + GraphQL) — no extra HTTP dependency |
 | Packaging    | PyInstaller                                                   |
 | Tests        | `pytest` / `pytest-qt`                                         |
 
@@ -107,6 +119,7 @@ models/
   task.py                     # Task dataclass + Priority enum + overdue logic
   schedule.py                 # Schedule/Occurrence + recurrence logic (occurs_on)
   integration.py              # AzureConfig / PullRequest + PR→task mapping
+  github.py                   # GitHubConfig / GitHubPullRequest + PR→task mapping
   linear.py                   # LinearConfig / LinearIssue + status-priority + issue→task mapping
   task_repository.py          # SQLite CRUD for tasks, schedules, overrides, and external links
 controllers/
@@ -116,6 +129,7 @@ views/
   task_dialog.py              # add/edit dialog; one-off deadline or repeat schedule
   task_list.py                # drag-to-reorder QTableWidget subclass
   integration_tab.py          # Azure DevOps config + Sync (background worker)
+  github_tab.py               # GitHub config + Sync (background worker)
   linear_tab.py               # Linear config: teams, per-status priority, exclude labels + Sync
   update_dialog.py            # auto-update: check/download workers + prompt & "what's new" dialogs
   theme.py                    # light/dark palettes + QSettings persistence
@@ -123,14 +137,17 @@ services/
   notifier.py                 # plyer desktop-notification wrapper
   updater.py                  # self-update: GitHub release check + download + self-replace (stdlib urllib)
   azure_client.py             # Azure DevOps REST client (stdlib urllib)
+  github_client.py            # GitHub GraphQL client (stdlib urllib)
   linear_client.py            # Linear GraphQL client (stdlib urllib)
-  credentials.py              # PAT / Linear key storage via OS keyring (with graceful fallback)
+  credentials.py              # PAT / GitHub token / Linear key storage via OS keyring (with graceful fallback)
   integration_settings.py     # Azure config persistence (QSettings)
+  github_settings.py          # GitHub config persistence (QSettings)
   linear_settings.py          # Linear config persistence (QSettings)
 tests/
   test_task_logic.py          # task logic-layer tests (in-memory DB)
   test_schedule_logic.py      # recurrence + schedule persistence tests
   test_integration_logic.py   # PR dedup / auto-complete / parsing / source + priority tests
+  test_github_logic.py        # GitHub dedup / lifecycle / parsing / client plumbing tests
   test_linear_logic.py        # Linear dedup / auto-complete / status-priority / exclusion / parsing tests
   test_export_logic.py        # per-day JSON export scoping + serialization tests
   test_updater_logic.py       # version compare / asset pick / release parsing (no network)
@@ -186,6 +203,19 @@ When run from source, the database lives at `data\tasks.db` next to the project.
 The token is written only to your OS keyring. **Remove integration** deletes the
 token and all Azure settings and forgets which PRs were synced (existing tasks are
 kept).
+
+## Setting up the GitHub integration
+
+1. In GitHub, create a **personal access token** (Settings → Developer settings). A
+   classic token needs the **`repo`** scope (or `public_repo` for public repos only); a
+   fine-grained token needs **Pull requests: Read** on the repositories you want.
+2. Open the **GitHub** tab, tick **Enable GitHub integration**, paste the **token**
+   (optionally an **organization**), then **Save**. Click **Test connection** to verify.
+3. Enable **PRs I'm asked to review** and/or **PRs I opened**, pick priorities, **Save**.
+4. **Sync now**, or leave the background auto-poll running.
+
+**Remove integration** deletes the token and all GitHub settings and forgets which PRs
+were synced (existing tasks are kept; Azure and Linear links are untouched).
 
 ## Setting up the Linear integration
 

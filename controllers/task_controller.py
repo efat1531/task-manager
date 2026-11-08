@@ -9,6 +9,14 @@ from datetime import date, datetime
 from typing import Callable, List, Optional, Set, Tuple
 
 from models import linkify
+from models.github import (
+    KEY_PREFIX,
+    GitHubConfig,
+    GitHubPullRequest,
+    github_key,
+    source_prefix,
+)
+from models.github import pr_to_task_fields as github_pr_to_task_fields
 from models.integration import AzureConfig, PullRequest, pr_key, pr_to_task_fields
 from models.notification import (
     KIND_LINEAR,
@@ -17,6 +25,9 @@ from models.notification import (
     SOURCE_AZURE_COMMENT,
     SOURCE_AZURE_REVIEW,
     SOURCE_AZURE_VOTE,
+    SOURCE_GITHUB_CHANGES,
+    SOURCE_GITHUB_COMMENT,
+    SOURCE_GITHUB_REVIEW,
     SOURCE_LINEAR,
     SOURCE_TASK_DUE,
     SOURCE_TASK_OVERDUE,
@@ -475,8 +486,127 @@ class TaskController:
 
     def clear_pr_links(self) -> None:
         """Forget which PRs have been synced. Tasks already created are kept, but
-        an open PR may produce a fresh task on a future sync."""
-        self._repo.clear_pr_links()
+        an open PR may produce a fresh task on a future sync. Scoped to Azure's
+        ``review:`` / ``author:`` keys so GitHub and Linear links survive."""
+        self._repo.clear_pr_links(prefix=("review:", "author:"))
+
+    # ---- GitHub pull-request sync ---------------------------------------
+    def sync_github_prs(
+        self,
+        prs: List[GitHubPullRequest],
+        source: str = "review",
+        config: Optional[GitHubConfig] = None,
+    ) -> dict:
+        """Reconcile the fetched GitHub PRs for one ``source`` against existing links.
+
+        The network fetch happens in the caller (a background worker); this method
+        is pure DB logic so the dedup + auto-complete behaviour stays testable.
+
+        - A PR with no existing link becomes a new task (and is linked).
+        - A PR that already has a link is skipped -- never duplicated, even if its
+          task was since edited or deleted.
+        - A previously-linked PR *absent* from ``prs`` (merged, closed, or -- for
+          the review source -- reviewed by you or no longer requesting you) has its
+          task completed.
+        - For the "review" source a completed task whose PR is back in the set
+          (your review was re-requested) is reopened.
+        - For the "author" source the task follows the PR: open review threads pin
+          it as Urgent, and a PR with changes requested is parked at Low priority
+          with its pin suppressed until the author acts.
+
+        Reconciliation is scoped to ``source``'s key prefix, so syncing one source
+        never touches the other's tasks, nor Azure's or Linear's. The returned
+        summary counts ``created`` / ``skipped`` / ``completed`` / ``reopened``.
+        """
+        cfg = config or GitHubConfig()
+        prefix = source_prefix(source)
+        existing = {
+            key: task_id
+            for key, task_id in self._repo.list_pr_links().items()
+            if key.startswith(prefix)
+        }
+        current_keys = set()
+        created = skipped = completed = reopened = 0
+
+        for pr in prs:
+            key = github_key(pr.repository, pr.number, source)
+            current_keys.add(key)
+            if key in existing:
+                task_id = existing[key]
+                skipped += 1
+            else:
+                task = self.create_task(**github_pr_to_task_fields(pr, cfg))
+                self._repo.link_pr(key, task.id)
+                task_id = task.id
+                created += 1
+                if source == "review":
+                    self.record_notification(
+                        kind=KIND_PR, source=SOURCE_GITHUB_REVIEW,
+                        title=f"PR #{pr.number} needs your review", body=pr.title,
+                        dedup_key=f"githubpr:review:{pr.repository}#{pr.number}",
+                    )
+
+            task = self._repo.get(task_id)
+            if task is None:  # the user deleted it; the link keeps it from returning
+                continue
+            if pr.is_author:
+                if pr.changes_requested:
+                    new_priority = Priority.LOW
+                    unresolved = 0
+                else:
+                    new_priority = cfg.priority_author
+                    unresolved = pr.unresolved_comment_count
+                # Detect transitions against the stored values *before* overwriting.
+                if (
+                    not pr.changes_requested
+                    and pr.unresolved_comment_count > task.unresolved_comments
+                ):
+                    self.record_notification(
+                        kind=KIND_PR, source=SOURCE_GITHUB_COMMENT,
+                        title="New comment on your PR", body=pr.title,
+                        dedup_key=(
+                            f"githubpr:comment:{pr.repository}#{pr.number}:"
+                            f"{pr.unresolved_comment_count}"
+                        ),
+                    )
+                if pr.changes_requested and task.priority != Priority.LOW:
+                    self.record_notification(
+                        kind=KIND_PR, source=SOURCE_GITHUB_CHANGES,
+                        title="Changes requested on your PR", body=pr.title,
+                        dedup_key=f"githubpr:changes:{pr.repository}#{pr.number}",
+                    )
+                changed = False
+                if task.priority != new_priority:
+                    task.priority = new_priority
+                    changed = True
+                if task.unresolved_comments != unresolved:
+                    task.unresolved_comments = unresolved
+                    changed = True
+                if changed:
+                    self._repo.update(task)
+            elif source == "review" and task.completed:
+                self._repo.set_completed(task_id, False)
+                reopened += 1
+
+        # Auto-complete tasks for PRs of this source that are no longer in scope.
+        for key, task_id in existing.items():
+            if key in current_keys:
+                continue
+            task = self._repo.get(task_id)
+            if task is not None and not task.completed:
+                self._repo.set_completed(task_id, True)
+                completed += 1
+
+        return {
+            "created": created,
+            "skipped": skipped,
+            "completed": completed,
+            "reopened": reopened,
+        }
+
+    def clear_github_links(self) -> None:
+        """Forget which GitHub PRs have been synced (Azure/Linear links are kept)."""
+        self._repo.clear_pr_links(prefix=KEY_PREFIX)
 
     # ---- Linear issue sync ----------------------------------------------
     def sync_linear_issues(

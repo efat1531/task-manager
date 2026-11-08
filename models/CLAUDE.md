@@ -8,6 +8,7 @@ Pure Python, headlessly testable. No Qt imports, no network. See root `CLAUDE.md
 | `notification.py` | `Notification` (feed row) + transient `NotificationEvent` + `NotificationConfig` (gating: `should_notify`/`in_quiet_hours`) + `relative_time`; `SOURCE_*`/`KIND_*` constants. Qt-free. |
 | `schedule.py` | `Schedule` / `Occurrence` dataclasses, `Frequency` enum, `occurs_on(schedule, day)` recurrence rule (daily/weekly-by-weekday/monthly). |
 | `integration.py` | Azure `AzureConfig` / `PullRequest`; `pr_key(org, id, source)` → `"{source}:{org}:{id}"`; `pr_to_task_fields` PR→task mapping. |
+| `github.py` | `GitHubConfig` / `GitHubPullRequest`; `github_key(repo, n, source)` → `"github-{source}:{owner/repo}#{n}"`; `pr_to_task_fields`. |
 | `linear.py` | `LinearConfig` / `LinearIssue`; `linear_key(id)` → `"linear:{id}"`; `filter_excluded`, `issue_to_task_fields` (per-status priority). |
 | `linkify.py` | Text helpers: `first_url(*texts)`, `pr_number(title)`. |
 | `task_repository.py` | **The only place SQL lives.** SQLite DAO for tasks, schedules, `schedule_overrides`, and `pr_links`. |
@@ -19,4 +20,6 @@ Pure Python, headlessly testable. No Qt imports, no network. See root `CLAUDE.md
   (`CREATE TABLE IF NOT EXISTS` won't add columns).
 - `pr_key` / `linear_key` are stable dedup keys sharing the `pr_links` table; the
   source/`linear:` prefix keeps each integration's tasks isolated.
+- GitHub keys use the `github-` prefix (no `_`/`%`); `clear_pr_links(prefix=...)` takes
+  one or several literal prefixes so removing one integration leaves the others' links.
 - Dates are ISO strings.
