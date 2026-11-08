@@ -47,6 +47,7 @@ from views.notification_center import NotificationBell
 from views.notifications_tab import NotificationsTab
 from views.task_dialog import TaskDialog
 from views.task_list import TaskTable
+from views.sync_indicator import SyncIndicator
 from views.update_dialog import UpdateManager
 
 _ALL_CATEGORIES = "All categories"
@@ -117,26 +118,14 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(self._tabs)
 
-        # Footer busy indicator: a compact "<spinner> <op>" label shown whenever
-        # any integration worker is running. Kept left of the countdown by adding
-        # it first. _busy_ops tracks the per-integration operation labels so
-        # concurrent Azure + Linear auto-syncs both show. The leading glyph is a
-        # QTimer-driven spinner (a plain "⟳" can't animate as static text).
+        # Footer sync indicator: a ring that spins while any integration worker
+        # runs; hovering it shows each integration's time to its next auto-sync
+        # (or "Syncing…"). _busy_ops tracks in-flight operations per integration.
+        # It hides when nothing is syncing or scheduled (see _update_sync_countdown).
         self._busy_ops: dict[str, str] = {}
-        self._busy_frame = 0
-        self._busy_label = QLabel()
-        self._busy_label.setObjectName("busyIndicator")  # accent color via QSS
-        self._busy_label.hide()
-        self.statusBar().addPermanentWidget(self._busy_label)
-        self._busy_timer = QTimer(self)
-        self._busy_timer.setInterval(90)
-        self._busy_timer.timeout.connect(self._tick_busy_spinner)
-
-        # Footer: a permanent status-bar label counting down to the next Azure /
-        # Linear auto-sync. Each side shows only while that integration has active
-        # sources (see _update_sync_countdown); hidden otherwise.
-        self._sync_countdown = QLabel()
-        self.statusBar().addPermanentWidget(self._sync_countdown)
+        self._sync_indicator = SyncIndicator()
+        self._sync_indicator.hide()
+        self.statusBar().addPermanentWidget(self._sync_indicator)
 
         # Background auto-poll timers for the Azure + Linear integrations. Both
         # timer objects are created before either is started so the countdown
@@ -854,73 +843,47 @@ class MainWindow(QMainWindow):
             self._poll_timer.stop()
         self._update_sync_countdown()
 
-    # ---- footer busy indicator ------------------------------------------
+    # ---- footer sync indicator ------------------------------------------
     def _on_integration_busy(self, source: str, busy: bool, label: str) -> None:
         """Track an integration's in-flight network op and refresh the footer."""
         if busy:
             self._busy_ops[source] = label
         else:
             self._busy_ops.pop(source, None)
-        self._refresh_busy_indicator()
-
-    # Braille spinner frames — a smooth rotating cycle that renders in any font.
-    _BUSY_FRAMES = "⣾⣽⣻⢿⡿⣟⣯⣷"
-
-    def _refresh_busy_indicator(self) -> None:
-        """Show the animated footer spinner while any integration worker runs."""
-        if self._busy_ops:
-            self._paint_busy_label()
-            self._busy_label.show()
-            if not self._busy_timer.isActive():
-                self._busy_timer.start()
-        else:
-            self._busy_timer.stop()
-            self._busy_frame = 0
-            self._busy_label.clear()
-            self._busy_label.hide()
-
-    def _paint_busy_label(self) -> None:
-        frame = self._BUSY_FRAMES[self._busy_frame % len(self._BUSY_FRAMES)]
-        self._busy_label.setText(f"{frame} " + " · ".join(self._busy_ops.values()))
-
-    def _tick_busy_spinner(self) -> None:
-        self._busy_frame += 1
-        self._paint_busy_label()
+        self._update_sync_countdown()
 
     @staticmethod
-    def _format_countdown(remaining_ms: int, name: str) -> str:
-        """``"Next <name> sync in mm:ss"`` for a millisecond remaining time."""
+    def _format_remaining(remaining_ms: int) -> str:
+        """``mm:ss`` for a millisecond remaining time."""
         total_seconds = max(0, remaining_ms) // 1000
-        return f"Next {name} sync in {total_seconds // 60:02d}:{total_seconds % 60:02d}"
+        return f"{total_seconds // 60:02d}:{total_seconds % 60:02d}"
 
     def _update_sync_countdown(self) -> None:
-        """Refresh the footer countdown to the next Azure / Linear auto-sync.
+        """Refresh the footer ring + its hover card from the poll timers.
 
-        Each side is shown only while that integration has active sources and its
-        poll timer is running; the label hides entirely when neither is active.
+        An integration appears while it is syncing, or while it has active sources
+        and a running poll timer. The ring hides when nothing is listed.
         """
-        parts = []
-        if (self._integration_tab.current_config().has_active_sources()
-                and self._poll_timer.isActive()):
-            parts.append(
-                self._format_countdown(self._poll_timer.remainingTime(), "Azure")
-            )
-        if (self._github_tab.current_config().has_active_sources()
-                and self._github_poll_timer.isActive()):
-            parts.append(
-                self._format_countdown(self._github_poll_timer.remainingTime(), "GitHub")
-            )
-        if (self._linear_tab.current_config().has_active_sources()
-                and self._linear_poll_timer.isActive()):
-            parts.append(
-                self._format_countdown(self._linear_poll_timer.remainingTime(), "Linear")
-            )
-        if parts:
-            self._sync_countdown.setText(" · ".join(parts))
-            self._sync_countdown.show()
-        else:
-            self._sync_countdown.clear()
-            self._sync_countdown.hide()
+        rows = []
+        fraction = None  # remaining share of the soonest scheduled interval
+        for key, name, tab, timer in (
+            ("azure", "Azure", self._integration_tab, self._poll_timer),
+            ("github", "GitHub", self._github_tab, self._github_poll_timer),
+            ("linear", "Linear", self._linear_tab, self._linear_poll_timer),
+        ):
+            scheduled = tab.current_config().has_active_sources() and timer.isActive()
+            if key in self._busy_ops:
+                rows.append((name, "Syncing…", True))
+            elif scheduled:
+                remaining = timer.remainingTime()
+                rows.append((name, self._format_remaining(remaining), False))
+                if timer.interval() > 0:
+                    share = max(0, remaining) / timer.interval()
+                    fraction = share if fraction is None else min(fraction, share)
+        self._sync_indicator.set_state(rows, bool(self._busy_ops), fraction)
+        self._sync_indicator.setVisible(
+            bool(rows) or self._sync_indicator.is_spinning()
+        )
 
     # ---- GitHub integration ---------------------------------------------
     def _on_github_prs_fetched(self, results: dict) -> None:

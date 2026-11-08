@@ -1,6 +1,6 @@
 # tests/ — pytest suite
 
-Run from the project root: `pytest` (currently **219 tests**, ~0.9s). Each test
+Run from the project root: `pytest` (currently **227 tests**, ~0.9s). Each test
 module prepends the repo root to `sys.path`, so no install/packaging is needed.
 
 | File | Covers |
@@ -16,11 +16,12 @@ module prepends the repo root to `sys.path`, so no install/packaging is needed.
 | `test_notification_logic.py` | Notification feed CRUD/dedup, reminder + sync event recording, `NotificationConfig` gating/quiet-hours, `relative_time`. |
 | `test_row_ordering_and_reorder.py` | `order_rows` merge/sort + manual reorder (logic, no Qt). |
 | `test_title_cell_rendering.py` | Title-cell rendering (needs `pytest-qt`/`qtbot`). |
+| `test_sync_indicator.py` | Footer sync ring + hover card: open/close timing (≤500 ms), cancel on re-enter, spin only while busy (needs `pytest-qt`). |
 | `test_github_tab_wiring.py` | GitHub tab signal/slot wiring through the real worker thread, network stubbed (needs `pytest-qt`). |
 
 ## Conventions
 - **Logic tests use an in-memory DB** (`TaskRepository(":memory:")`) and no Qt/display
   — they run headless in CI. Add new logic tests this way.
-- Only `test_title_cell_rendering.py` and `test_github_tab_wiring.py` use `pytest-qt` (`qtbot`); keep
+- Only `test_title_cell_rendering.py`, `test_github_tab_wiring.py` and `test_sync_indicator.py` use `pytest-qt` (`qtbot`); keep
   display-dependent assertions out of the logic tests.
 - No network in tests — updater/integration tests parse fixed payloads.
