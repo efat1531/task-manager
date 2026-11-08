@@ -28,7 +28,7 @@ class GitHubConfig:
     ``services.credentials``). The authenticated user's login is resolved from the
     token on every sync, so a swapped token can never leave a stale identity."""
     enabled: bool = False
-    owner: str = ""                 # optional org/user to restrict PRs to; "" = all
+    owner: str = ""                 # optional organization to restrict PRs to (org:); "" = all
     poll_minutes: int = 15
     # Which pull requests become tasks. Both default off — a user opts in per source.
     create_for_reviewer: bool = False   # PRs where your review is requested
@@ -101,6 +101,15 @@ def github_key(repository: str, number: int, source: str = "review") -> str:
     one never auto-completes the other's tasks; the ``github-`` prefix keeps GitHub
     links apart from Azure's (``review:``/``author:``) and Linear's (``linear:``)."""
     return f"{KEY_PREFIX}{source}:{repository}#{number}"
+
+
+def done_key(source: str, repository: str, number: int) -> str:
+    """Marker link recording that a task was *auto*-completed by a sync (its PR left
+    the set). Lets a later sync reopen exactly those tasks when the PR returns,
+    without overriding a task the user completed by hand. Its prefix
+    (``github-done:``) differs from every ``source_prefix`` so reconcile never
+    mistakes it for a PR link, yet ``KEY_PREFIX`` clearing still removes it."""
+    return f"{KEY_PREFIX}done:{source}:{repository}#{number}"
 
 
 def source_prefix(source: str) -> str:

@@ -379,6 +379,9 @@ class GitHubIntegrationTab(QWidget):
         if not token:
             self._status.setText("Enter a GitHub access token first.")
             return
+        if mode == "sync" and not cfg.enabled:
+            self._status.setText("Tick 'Enable GitHub integration' before syncing.")
+            return
         if mode == "sync" and not sources:
             self._status.setText("Enable a pull-request source above before syncing.")
             return

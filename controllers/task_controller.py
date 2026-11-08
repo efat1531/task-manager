@@ -13,6 +13,7 @@ from models.github import (
     KEY_PREFIX,
     GitHubConfig,
     GitHubPullRequest,
+    done_key,
     github_key,
     source_prefix,
 )
@@ -508,8 +509,9 @@ class TaskController:
         - A previously-linked PR *absent* from ``prs`` (merged, closed, or -- for
           the review source -- reviewed by you or no longer requesting you) has its
           task completed.
-        - For the "review" source a completed task whose PR is back in the set
-          (your review was re-requested) is reopened.
+        - A task this method auto-completed is reopened if its PR comes back (e.g.
+          your review was re-requested). A task the user completed by hand is never
+          reopened.
         - For the "author" source the task follows the PR: open review threads pin
           it as Urgent, and a PR with changes requested is parked at Low priority
           with its pin suppressed until the author acts.
@@ -520,10 +522,9 @@ class TaskController:
         """
         cfg = config or GitHubConfig()
         prefix = source_prefix(source)
+        all_links = self._repo.list_pr_links()
         existing = {
-            key: task_id
-            for key, task_id in self._repo.list_pr_links().items()
-            if key.startswith(prefix)
+            key: task_id for key, task_id in all_links.items() if key.startswith(prefix)
         }
         current_keys = set()
         created = skipped = completed = reopened = 0
@@ -549,6 +550,13 @@ class TaskController:
             task = self._repo.get(task_id)
             if task is None:  # the user deleted it; the link keeps it from returning
                 continue
+            marker = done_key(source, pr.repository, pr.number)
+            if task.completed and marker in all_links:
+                # Auto-completed earlier (PR left the set) and now back: reopen.
+                self._repo.set_completed(task_id, False)
+                self._repo.delete_pr_link(marker)
+                reopened += 1
+                task = self._repo.get(task_id)
             if pr.is_author:
                 if pr.changes_requested:
                     new_priority = Priority.LOW
@@ -584,17 +592,17 @@ class TaskController:
                     changed = True
                 if changed:
                     self._repo.update(task)
-            elif source == "review" and task.completed:
-                self._repo.set_completed(task_id, False)
-                reopened += 1
 
-        # Auto-complete tasks for PRs of this source that are no longer in scope.
+        # Auto-complete tasks for PRs of this source that are no longer in scope,
+        # leaving a marker so they can be reopened if the PR returns.
         for key, task_id in existing.items():
             if key in current_keys:
                 continue
             task = self._repo.get(task_id)
             if task is not None and not task.completed:
                 self._repo.set_completed(task_id, True)
+                repo_part, _, number = key[len(prefix):].rpartition("#")
+                self._repo.link_pr(done_key(source, repo_part, int(number)), task_id)
                 completed += 1
 
         return {

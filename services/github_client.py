@@ -32,7 +32,7 @@ _MAX_RETRY_WAIT = 30
 
 # Pagination: bounded so a huge result set can't spin the worker.
 _PAGE_SIZE = 50
-_MAX_PAGES = 4  # up to 200 PRs per source
+_MAX_PAGES = 10  # up to 500 PRs per source
 
 _PR_FIELDS = (
     "number title url isDraft reviewDecision "
@@ -76,15 +76,16 @@ class GitHubClient:
                 with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
                     raw = response.read().decode("utf-8")
             except urllib.error.HTTPError as exc:  # 401/403/429/...
+                if exc.code == 403 and (
+                    exc.headers.get("X-RateLimit-Remaining") if exc.headers else None
+                ) == "0":
+                    raise GitHubError(self._RATE_LIMIT_MESSAGE) from exc
                 wait = self._retry_after_seconds(exc) if exc.code in (403, 429) else None
                 if wait is not None or exc.code == 429:
                     if attempt < _MAX_ATTEMPTS - 1:
                         time.sleep(wait or _DEFAULT_RETRY_WAIT)
                         continue
-                    raise GitHubError(
-                        "GitHub is rate limiting requests. "
-                        "Try again shortly or increase the poll interval."
-                    ) from exc
+                    raise GitHubError(self._RATE_LIMIT_MESSAGE) from exc
                 detail = (
                     "authentication failed (check the token and its scopes)"
                     if exc.code in (401, 403) else exc.reason
@@ -107,8 +108,15 @@ class GitHubClient:
         # Unreachable: the loop either returns or raises on every path.
         raise GitHubError("GitHub request failed after retries.")
 
-    @staticmethod
-    def _format_errors(errors: list) -> str:
+    _RATE_LIMIT_MESSAGE = (
+        "GitHub is rate limiting requests. "
+        "Try again shortly or increase the poll interval."
+    )
+
+    @classmethod
+    def _format_errors(cls, errors: list) -> str:
+        if any(isinstance(e, dict) and e.get("type") == "RATE_LIMITED" for e in errors):
+            return cls._RATE_LIMIT_MESSAGE
         messages = [str(e.get("message", "")) for e in errors if isinstance(e, dict)]
         joined = "; ".join(m for m in messages if m)
         return f"GitHub API error: {joined}" if joined else "GitHub API error."
@@ -156,7 +164,7 @@ class GitHubClient:
         )
         result: List[GitHubPullRequest] = []
         cursor: Optional[str] = None
-        for _ in range(_MAX_PAGES):
+        for page_no in range(_MAX_PAGES):
             data = self._post(
                 query, {"q": search_query, "n": _PAGE_SIZE, "after": cursor}
             )
@@ -165,6 +173,13 @@ class GitHubClient:
             page = search.get("pageInfo") or {}
             if not page.get("hasNextPage") or not page.get("endCursor"):
                 break
+            if page_no == _MAX_PAGES - 1:
+                # A truncated list would look like "these PRs closed" to the sync
+                # and mass-complete their tasks, so fail loudly instead.
+                raise GitHubError(
+                    f"More than {_MAX_PAGES * _PAGE_SIZE} matching pull requests — "
+                    "narrow the sync with the Organization filter."
+                )
             cursor = page["endCursor"]
         return result
 

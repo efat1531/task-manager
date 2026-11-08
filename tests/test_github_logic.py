@@ -178,6 +178,27 @@ def test_changes_requested_parks_pr_and_restores(controller):
     assert task.priority == Priority.MEDIUM and task.unresolved_comments == 1
 
 
+def test_manual_completion_of_review_task_is_not_reopened(controller):
+    controller.sync_github_prs([_pr(1)], "review")
+    controller._repo.set_completed(controller.list_tasks()[0].id, True)
+    for _ in range(2):  # PR still in the review-requested set on every poll
+        s = controller.sync_github_prs([_pr(1)], "review")
+        assert s["reopened"] == 0
+    assert controller.list_tasks()[0].completed
+
+
+def test_autocompleted_author_task_reopens_when_pr_returns(controller):
+    controller.sync_github_prs([_pr(1, author=True)], "author")
+    controller.sync_github_prs([], "author")
+    assert controller.list_tasks()[0].completed
+    s = controller.sync_github_prs([_pr(1, author=True, unresolved=2)], "author")
+    task = controller.list_tasks()[0]
+    assert s["reopened"] == 1 and not task.completed and task.unresolved_comments == 2
+    # the marker is consumed: a later manual completion sticks
+    controller._repo.set_completed(task.id, True)
+    assert controller.sync_github_prs([_pr(1, author=True)], "author")["reopened"] == 0
+
+
 def test_author_task_is_not_reopened_after_manual_completion(controller):
     controller.sync_github_prs([_pr(1, author=True)], "author")
     task = controller.list_tasks()[0]
@@ -352,6 +373,34 @@ def test_search_paginates_and_builds_qualifiers(monkeypatch):
     assert queries[0]["after"] is None and queries[1]["after"] == "c1"
     q = queries[0]["q"]
     assert "review-requested:alice" in q and "-author:alice" in q and "org:contoso" in q
+
+
+def test_search_truncation_raises_instead_of_returning_partial_set(monkeypatch):
+    page = {"data": {"search": {"nodes": [_node(1)],
+                                "pageInfo": {"hasNextPage": True, "endCursor": "c"}}}}
+    monkeypatch.setattr(
+        github_client.urllib.request, "urlopen",
+        lambda r, timeout: _Resp(json.dumps(page)),
+    )
+    with pytest.raises(GitHubError, match="narrow the sync"):
+        GitHubClient("tok").list_created_prs("alice")
+
+
+def test_primary_rate_limit_is_reported_as_rate_limit(monkeypatch):
+    def forbidden(request, timeout):
+        raise _http_error(403, {"X-RateLimit-Remaining": "0"})
+
+    monkeypatch.setattr(github_client.urllib.request, "urlopen", forbidden)
+    with pytest.raises(GitHubError, match="rate limiting"):
+        GitHubClient("tok").get_viewer_login()
+    monkeypatch.setattr(
+        github_client.urllib.request, "urlopen",
+        lambda r, timeout: _Resp(json.dumps(
+            {"errors": [{"type": "RATE_LIMITED", "message": "API rate limit exceeded"}]}
+        )),
+    )
+    with pytest.raises(GitHubError, match="rate limiting"):
+        GitHubClient("tok").get_viewer_login()
 
 
 def test_test_connection_messages(monkeypatch):
