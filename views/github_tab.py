@@ -33,7 +33,15 @@ from services import credentials, github_settings
 from services.github_client import GitHubClient, GitHubError, token_is_valid
 from views.blueprint import BlueprintFrame
 
-_TOKEN_PLACEHOLDER = "Personal access token (repo / Pull requests: read)"
+_TOKEN_PLACEHOLDER = "Fine-grained token (Pull requests: Read-only)"
+_TOKEN_HELP = (
+    "Minimal token: GitHub → Settings → Developer settings → Personal access tokens → "
+    "Fine-grained tokens. Resource owner: the account or organization that owns the "
+    "repositories. Repository access: all repositories (PRs in unselected repositories "
+    "are not synced). Permissions: Pull requests → Read-only; nothing else "
+    "(Metadata: Read-only is added automatically). To sync PRs across several owners, "
+    "use a classic token with the 'repo' scope instead."
+)
 
 
 def _priority_combo() -> QComboBox:
@@ -129,6 +137,10 @@ class GitHubIntegrationTab(QWidget):
         subtitle.setWordWrap(True)
         root.addWidget(heading)
         root.addWidget(subtitle)
+        token_help = QLabel(_TOKEN_HELP)
+        token_help.setObjectName("pageSubtitle")
+        token_help.setWordWrap(True)
+        root.addWidget(token_help)
 
         columns = QGridLayout()
         columns.setHorizontalSpacing(18)

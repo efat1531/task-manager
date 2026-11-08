@@ -193,7 +193,8 @@ When run from source, the database lives at `data\tasks.db` next to the project.
 
 ## Setting up the Azure integration
 
-1. In Azure DevOps, create a **Personal Access Token** with **Code → Read** scope.
+1. In Azure DevOps (User settings → Personal access tokens → New Token), create a token
+   for your organization with **Scopes → Custom defined → Code → Read** and nothing else.
 2. Open the **Azure** tab in the app.
 3. Enter your **organization** (e.g. `myorg` or `https://dev.azure.com/myorg`), an
    optional **project**, and paste the **token**, then **Save**.
@@ -209,9 +210,16 @@ kept).
 
 ## Setting up the GitHub integration
 
-1. In GitHub, create a **personal access token** (Settings → Developer settings). A
-   classic token needs the **`repo`** scope (or `public_repo` for public repos only); a
-   fine-grained token needs **Pull requests: Read** on the repositories you want.
+1. In GitHub, create a **fine-grained personal access token** (Settings → Developer
+   settings → Personal access tokens → Fine-grained tokens) with the least access needed:
+   - **Resource owner:** the account or organization that owns the repositories.
+   - **Repository access:** *All repositories* (PRs in repositories you don't select are
+     not synced).
+   - **Permissions → Repositories:** **Pull requests → Read-only** and nothing else
+     (*Metadata: Read-only* is added automatically). Leave Actions, Code scanning, etc. off.
+   - Syncing across several owners needs a classic token with the **`repo`** scope
+     (`public_repo` for public repos only), since a fine-grained token has one owner.
+   - An organization may require an admin to approve the token.
 2. Open the **GitHub** tab, tick **Enable GitHub integration**, paste the **token**
    (optionally an **organization**), then **Save**. Click **Test connection** to verify.
 3. Enable **PRs I'm asked to review** and/or **PRs I opened**, pick priorities, **Save**.
@@ -222,7 +230,8 @@ were synced (existing tasks are kept; Azure and Linear links are untouched).
 
 ## Setting up the Linear integration
 
-1. In Linear, create a **personal API key** (Settings → Security & access → API).
+1. In Linear, create a **personal API key** (Settings → Account → Security & access →
+   Personal API keys) with **Read** permission only and access to just the teams you sync.
 2. Open the **Linear** tab in the app, tick **Enable Linear integration**, paste the
    **API key**, then **Save**. Click **Test connection** to verify.
 3. Click **Load teams**, then tick the **team(s)** whose issues you want.
